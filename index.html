@@ -629,69 +629,186 @@ function seed(){
     {id:'us6', nombre:'Nadia Ferrari', rol:'admin',    profId:null, sucursalId:null, areaId:null, permisos:{}, activo:true}
   ];
 
-  /* turnos de ejemplo: hoy y mañana en Centro */
-  const t = [];
-  const push = (clId, svId, prId, fecha, hora, estado) => {
-    const sv = byId(D.servicios, svId);
-    t.push({ id:uid('vi'), clientaId:clId, sucursalId: byId(D.areas, sv.areaId).sucursalId,
-      fecha, creada:new Date().toISOString(),
-      lineas:[{ id:uid('ln'), servicioId:svId, profId:prId, areaId:sv.areaId,
-        hora, dur:sv.dur, estado, precio:sv.contado, descuento:0,
-        comisionPct: sv.comision, exenta:false, motivo:'' }],
-      pagos:[] });
-  };
+  /* ============================================================
+     LA AGENDA DE EJEMPLO: UN NEGOCIO ANDANDO
+
+     No son cuatro turnos sueltos. Son tres semanas para atrás ya
+     cobradas, el día de hoy en plena marcha, y tres semanas para
+     adelante reservadas, en las tres sucursales.
+     Los números son "al azar" pero SIEMPRE LOS MISMOS: así todas
+     ven lo mismo y se puede hablar de "el turno de las 10" sin líos.
+     ============================================================ */
   const H = hoy(), M = addDays(H,1);
   const svAr = n => D.servicios.filter(s=>s.areaId===n);
-  const A1 = svAr('ar1'), A2 = svAr('ar2'), A3 = svAr('ar3'), A4 = svAr('ar4');
 
-  push('cl1', A2[0].id,'pr3',H,'09:00','fin');
-  push('cl2', A2[1].id,'pr9',H,'09:00','fin');
-  push('cl3', A1[2].id,'pr1',H,'09:30','serv');
-  push('cl4', A1[0].id,'pr2',H,'10:00','serv');
-  push('cl5', A2[3].id,'pr3',H,'10:30','lleg');
-  push('cl6', A2[0].id,'pr9',H,'10:30','conf');
-  push('cl7', A1[3].id,'pr1',H,'11:30','conf');
-  push('cl8', A3[0].id,'pr4',H,'11:00','conf');
-  push('cl9', A2[2].id,'pr3',H,'12:00','res');
-  push('cl10',A1[4].id,'pr8',H,'12:00','conf');
-  push('cl11',A4[1].id,'pr5',H,'14:00','res');
-  push('cl12',A2[0].id,'pr9',H,'14:30','res');
-  push('cl13',A1[1].id,'pr1',H,'15:00','conf');
-  push('cl14',A3[1].id,'pr4',H,'15:30','res');
-  push('cl15',A2[1].id,'pr3',H,'16:00','res');
-  push('cl16',A4[0].id,'pr5',H,'16:30','can');
-  push('cl17',A1[0].id,'pr2',H,'08:30','no');
-  push('cl18',A2[0].id,'pr3',M,'09:00','conf');
-  push('cl1', A1[2].id,'pr1',M,'10:00','conf');
-  push('cl3', A2[1].id,'pr9',M,'11:00','res');
-  D.visitas = t;
+  let _s = 20260915;
+  const rnd = () => { _s = (_s*1103515245 + 12345) & 0x7fffffff; return _s/0x7fffffff; };
+  const elegir = a => a[Math.floor(rnd()*a.length)];
+  const chance = p => rnd() < p;
 
-  /* cobrar las finalizadas */
-  D.visitas.filter(v=>v.lineas[0].estado==='fin').forEach(v=>{
-    v.pagos.push({id:uid('pa'), importe:v.lineas[0].precio, medio:'efectivo',
-      tipo:'total', fecha:v.fecha, usuario:'Vanesa Ledesma'});
-  });
+  /* ---- más clientas: un negocio de verdad tiene cartera ---- */
+  const NOM = ['Brenda','Candela','Daniela','Emilia','Fernanda','Gisela','Ivana','Jazmín',
+    'Karen','Lucía','Malena','Noelia','Paula','Romina','Sabrina','Tamara','Valentina',
+    'Ximena','Yamila','Zoe','Aldana','Belén','Cecilia','Débora','Elisa','Gabriela',
+    'Ingrid','Jimena','Lorena','Mariel','Natalia','Ornella','Priscila','Rosario','Silvana',
+    'Verónica','Aitana','Bianca','Carolina','Denise','Evelyn','Giuliana'];
+  const APE = ['Acosta','Bianchi','Cabrera','Duarte','Escobar','Figueroa','Gutiérrez',
+    'Herrera','Juárez','Ledesma','Maidana','Núñez','Ojeda','Peralta','Quiroga','Ramírez',
+    'Suárez','Torres','Vera','Zárate','Aguirre','Barrios','Coronel','Díaz','Espinosa',
+    'Fernández','Gómez','Ibarra','Leiva','Molina','Ortiz','Pereyra','Rivas','Salas',
+    'Toledo','Villalba','Ávalos','Bustos','Cáceres','Delgado','Encina','Franco'];
+  for(let i=0;i<84;i++){
+    const n = NOM[i%NOM.length]+' '+APE[(i*7+3+5*Math.floor(i/NOM.length))%APE.length];
+    if(D.clientas.some(c=>c.nombre===n)) continue;
+    D.clientas.push({id:'cl'+(19+i), nombre:n,
+      tel:'221 5'+(60+(i%40))+'-'+(1000+i*91), nacimiento:'',
+      notas:'', notasInt:'', alta: addDays(H, -(20 + i*4))});
+  }
+  const CLI = D.clientas.map(c=>c.id);
 
-  /* excepciones de horario de ejemplo */
+  /* ---- ausencias cargadas: hay que verlas en la agenda ---- */
   D.excepciones = [
     {id:uid('ex'), profId:'pr3', tipo:'no', desdeF:addDays(H,2), hastaF:addDays(H,2),
      desde:null, hasta:null, areaId:null, motivo:'Trámite'},
     {id:uid('ex'), profId:'pr9', tipo:'vacaciones', desdeF:addDays(H,4), hastaF:addDays(H,11),
      desde:null, hasta:null, areaId:null, motivo:''},
     {id:uid('ex'), profId:'pr1', tipo:'horario', desdeF:addDays(H,1), hastaF:addDays(H,1),
-     desde:'11:00', hasta:'19:00', areaId:null, motivo:'Entra más tarde'}
+     desde:'11:00', hasta:'19:00', areaId:null, motivo:'Entra más tarde'},
+    {id:uid('ex'), profId:'pr6', tipo:'no', desdeF:addDays(H,-3), hastaF:addDays(H,-3),
+     desde:null, hasta:null, areaId:null, motivo:'Se enfermó'}
   ];
+  /* los días en que alguien NO está: ahí no se generan turnos */
+  const noTrabaja = (profId, f) => D.excepciones.some(e=>
+    e.profId===profId && (e.tipo==='no'||e.tipo==='vacaciones') && f>=e.desdeF && f<=e.hastaF);
 
-  /* lista de espera */
+  /* ---- el generador ---- */
+  const visitas = [];
+  const libre = {};                    /* profesional|fecha -> franjas ya tomadas */
+  /* El día de ejemplo tiene que verse EN MARCHA a la hora que lo abran.
+     Si alguien entra a las 9 de la noche y todo el día ya pasó, la pantalla
+     queda muerta y no se entiende nada. Por eso, para repartir los estados,
+     se hace de cuenta que es el mediodía: algunas terminadas, dos o tres
+     adentro atendiéndose, y un montón por venir. */
+  const ahoraReal = (()=>{ const d=new Date(); return d.getHours()*60+d.getMinutes(); })();
+  const ahora = Math.min(Math.max(ahoraReal, 11*60), 15*60);
+  const USUARIOS_CAJA = ['Vanesa Ledesma','Vanesa Ledesma','Nadia Ferrari'];
+  const MEDIO_POND = ['efectivo','efectivo','efectivo','efectivo','efectivo',
+    'transfer','transfer','debito','credito','mp'];
+  const conRec = m => (MEDIOS.find(x=>x.k===m)||{}).rec;
+  const lista = c => Math.ceil(c*(1+D.cfg.recargo/100)/D.cfg.redondeo)*D.cfg.redondeo;
+
+  for(let dd=-14; dd<=10; dd++){
+    const f = addDays(H, dd);
+    const dow = parseISO(f).getDay();
+    D.asign.forEach(as=>{
+      if(noTrabaja(as.profId, f)) return;
+      const ho = D.horarios.find(h=>h.asignId===as.id && h.dia===dow);
+      if(!ho) return;                                   /* ese día no trabaja */
+      const area = byId(D.areas, as.areaId);
+      const svs = D.servicios.filter(x=>x.areaId===as.areaId && x.activo);
+      if(!svs.length) return;
+      const finTurno = mh(ho.hasta), pd = mh(ho.pausaD), ph = mh(ho.pausaH);
+      /* qué tan lleno está: lo de atrás y lo de hoy, a tope; lo de más
+         adelante se va vaciando, como pasa de verdad */
+      const hueco = dd < 0 ? 0.30 : dd === 0 ? 0.10
+                  : dd <= 4 ? 0.20 : dd <= 7 ? 0.45 : 0.65;
+      let t = mh(ho.desde);
+      while(t < finTurno - 20){
+        if(t >= pd && t < ph){ t = ph; continue; }
+        if(chance(hueco)){ t += 15; continue; }
+        const sv = elegir(svs);
+        if(t + sv.dur > finTurno) break;
+        if(t < pd && t + sv.dur > pd){ t = ph; continue; }   /* no pisar el almuerzo */
+        const k = as.profId+'|'+f;
+        (libre[k] = libre[k] || []).push([t, t+sv.dur]);
+
+        let estado;
+        if(dd < 0)       estado = chance(.05) ? 'can' : chance(.045) ? 'no' : 'fin';
+        else if(dd > 0)  estado = (dd<=2 && chance(.65)) ? 'conf' : 'res';
+        else {
+          if(t + sv.dur <= ahora - 10)        estado = chance(.04) ? 'no' : 'fin';
+          else if(t <= ahora + 5)             estado = chance(.72) ? 'serv' : 'lleg';
+          else if(t - ahora <= 40)            estado = chance(.45) ? 'lleg' : 'conf';
+          else                                estado = chance(.55) ? 'conf' : 'res';
+          if(estado!=='fin' && estado!=='serv' && chance(.035)) estado = 'can';
+        }
+
+        const desc = (estado==='fin' && chance(.08)) ? Math.round(sv.contado*0.1/500)*500 : 0;
+        const v = { id:uid('vi'), clientaId: elegir(CLI), sucursalId: area.sucursalId,
+          fecha: f, creada: new Date(parseISO(f).getTime() - 86400000*(1+Math.floor(rnd()*9))).toISOString(),
+          lineas:[{ id:uid('ln'), servicioId:sv.id, profId:as.profId, areaId:as.areaId,
+            hora: hm(t), dur: sv.dur, estado, precio: sv.contado, descuento: desc,
+            comisionPct: sv.comision, exenta:false, motivo: estado==='can'?'La clienta avisó':'' }],
+          pagos:[] };
+
+        /* lo que se terminó, se cobró */
+        if(estado === 'fin'){
+          const medio = elegir(MEDIO_POND);
+          const base = sv.contado - desc;
+          const imp = conRec(medio) ? lista(base) : base;
+          v.pagos.push({id:uid('pa'), importe:imp, contado:base, medio, tipo:'total',
+            fecha:f, hora:hm(Math.min(finTurno, t+sv.dur+5)),
+            usuario: USUARIOS_CAJA[['su1','su2','su3'].indexOf(area.sucursalId)] || 'Vanesa Ledesma',
+            anulado:null});
+        }
+        /* algunas de adelante dejan seña */
+        if(dd > 0 && chance(.07)){
+          const sena = Math.round(sv.contado*0.3/500)*500;
+          v.pagos.push({id:uid('pa'), importe:sena, contado:sena, medio:'transfer', tipo:'sena',
+            fecha: addDays(f, -2), hora:'11:00', usuario:'Vanesa Ledesma', anulado:null});
+        }
+        visitas.push(v);
+        t += sv.dur + (chance(.35) ? 15 : 0);
+      }
+    });
+  }
+  D.visitas = visitas;
+
+  /* ---- lista de espera ---- */
+  const A1 = svAr('ar1'), A2 = svAr('ar2');
   D.espera = [
     {id:uid('es'), clientaId:'cl11', servicioId:A2[1].id, fecha:H, nota:'Cualquier horario'},
-    {id:uid('es'), clientaId:'cl14', servicioId:A1[0].id, fecha:M, nota:'Después de las 15'}
+    {id:uid('es'), clientaId:'cl14', servicioId:A1[0].id, fecha:M, nota:'Después de las 15'},
+    {id:uid('es'), clientaId:'cl6',  servicioId:A1[2].id, fecha:H, nota:'Si se libera algo hoy'},
+    {id:uid('es'), clientaId:'cl22', servicioId:A2[0].id, fecha:addDays(H,2), nota:'A la mañana'}
   ];
 
-  /* caja abierta hoy en Centro */
-  D.caja = [{id:uid('ca'), sucursalId:'su1', fecha:H, montoInicial:50000,
-    abierta:true, montoContado:null, usuario:'Vanesa Ledesma'}];
-  D.gastos = [{id:uid('ga'), sucursalId:'su1', fecha:H, concepto:'Insumos de manicuría', importe:18500}];
+  /* ---- la caja de cada día en cada sucursal ---- */
+  D.caja = []; D.gastos = [];
+  const GASTOS = [['Insumos de manicuría',18500],['Descartables',9500],['Limpieza',7000],
+    ['Café y agua',6500],['Insumos de pestañas',24000],['Toallas',12000],
+    ['Delivery de insumos',5000],['Mantenimiento equipo',32000]];
+  ['su1','su2','su3'].forEach((sid, si)=>{
+    const quien = USUARIOS_CAJA[si];
+    for(let dd=-14; dd<=0; dd++){
+      const f = addDays(H, dd);
+      const hubo = D.visitas.some(v=>v.sucursalId===sid && v.fecha===f && v.pagos.length);
+      if(!hubo && dd!==0) continue;
+      const enEfectivo = D.visitas.filter(v=>v.sucursalId===sid && v.fecha===f)
+        .reduce((a,v)=>a + v.pagos.filter(p=>p.medio==='efectivo')
+          .reduce((b,p)=>b+p.importe,0), 0);
+      D.caja.push({id:uid('ca'), sucursalId:sid, fecha:f, montoInicial:20000,
+        abierta: dd===0, montoContado: dd===0 ? null : 20000 + enEfectivo,
+        usuario: quien});
+      if(chance(.45) || dd===0){
+        const g = elegir(GASTOS);
+        D.gastos.push({id:uid('ga'), sucursalId:sid, fecha:f, concepto:g[0],
+          importe:g[1], medio:'efectivo', usuario:quien});
+      }
+    }
+  });
+
+  /* ---- fichajes de hoy: quién entró y a qué hora ---- */
+  D.fichadas = [];
+  D.asign.forEach(as=>{
+    const ho = D.horarios.find(h=>h.asignId===as.id && h.dia===parseISO(H).getDay());
+    if(!ho) return;
+    if(D.fichadas.some(x=>x.profId===as.profId && x.fecha===H)) return;
+    const ent = mh(ho.desde) + (chance(.3) ? Math.floor(rnd()*12) : -Math.floor(rnd()*6));
+    if(ent > ahoraReal) return;
+    D.fichadas.push({id:uid('fi'), profId:as.profId, fecha:H, entrada:hm(Math.max(0,ent)),
+      salida: (mh(ho.hasta) < ahoraReal) ? ho.hasta : null});
+  });
 
   /* paquetes */
   const svDef = D.servicios.filter(s=>byId(D.areas,s.areaId).nombre==='Depilación definitiva');
