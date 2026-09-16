@@ -5697,18 +5697,44 @@ function vReportes(){
   const fijo = nivel==='dia';
   const per = fijo ? 'hoy' : (ST.repPer || '30');
   const R = rangoPeriodo(per);
-  let vs = DB.visitas.filter(v=>v.fecha>=R.desde && v.fecha<=R.hasta);
+  /* recepción y supervisora ven SU sucursal, no el negocio entero */
+  const soloSuc = (nivel!=='todo') ? ST.sucursalId : null;
+  let vs = DB.visitas.filter(v=>v.fecha>=R.desde && v.fecha<=R.hasta
+    && (!soloSuc || v.sucursalId===soloSuc));
   if(nivel==='area'){
     const mias = areasDeUsuario();
     vs = vs.map(v=>({...v, lineas:v.lineas.filter(l=>mias.includes(l.areaId))})).filter(v=>v.lineas.length);
   }
-  const fact = vs.reduce((s,v)=>s+pagadoVisita(v),0);
+
+  /* ---- LA PLATA QUE ENTRÓ ----
+     Sale del LIBRO DE CAJA, el mismo lugar del que sale la pantalla de Caja.
+     Por eso los dos números dan siempre IGUAL: si acá dice que entraron
+     $500.000, en la caja de esos días entraron $500.000.
+
+     El recargo de la tarjeta CUENTA como plata que entró. Es plata del
+     negocio: después la dueña decide cuándo y cuánto le paga a la tarjeta,
+     y ese pago se carga como un gasto. Lo que NO cambia es la comisión de
+     la profesional, que se sigue calculando sobre el precio de contado. */
+  const movsR = (DB.mov||[]).filter(m=> m.fecha>=R.desde && m.fecha<=R.hasta
+    && !m.anulado && m.tipo!=='anulacion' && (!soloSuc || m.sucursalId===soloSuc));
+  const entraron = ms => ms.reduce((t,m)=>{
+    const sg = (MOV_TIPOS[m.tipo]||{}).signo;
+    if(m.tipo==='devolucion') return t - m.importe;
+    return t + (sg===1 ? m.importe : 0);
+  },0);
+  /* la supervisora ve solo lo de sus áreas: eso no está en el libro,
+     hay que sacarlo de los turnos */
+  const fact = nivel==='area'
+    ? vs.reduce((s,v)=>s+cobradoVisita(v),0)
+    : entraron(movsR);
   const fin = vs.reduce((s,v)=>s+v.lineas.filter(l=>l.estado==='fin').length,0);
   const can = vs.reduce((s,v)=>s+v.lineas.filter(l=>l.estado==='can').length,0);
   const no  = vs.reduce((s,v)=>s+v.lineas.filter(l=>l.estado==='no').length,0);
 
-  const porSuc = DB.sucursales.map(su=>({su,
-    t: vs.filter(v=>v.sucursalId===su.id).reduce((s,v)=>s+pagadoVisita(v),0)}))
+  const porSuc = DB.sucursales.filter(su=>!soloSuc || su.id===soloSuc).map(su=>({su,
+    t: nivel==='area'
+      ? vs.filter(v=>v.sucursalId===su.id).reduce((s,v)=>s+cobradoVisita(v),0)
+      : entraron(movsR.filter(m=>m.sucursalId===su.id))}))
     .sort((a,b)=>b.t-a.t);
   const cnt={};
   vs.forEach(v=>v.lineas.filter(l=>l.estado==='fin').forEach(l=>{
@@ -5724,12 +5750,15 @@ function vReportes(){
     <div class="small muted" style="margin-bottom:11px">${fijo?'Movimiento de hoy':esc(R.n)+' · del '+fechaCorta(R.desde)+' al '+fechaCorta(R.hasta)}${
       nivel==='area'?' · solo '+esc(nombreAreasDe()||'tu área'):''}</div>
     <div class="kpis" style="grid-template-columns:1fr 1fr">
-      <div class="kpi"><b style="font-size:19px">${money(fact)}</b><span>Facturado</span></div>
+      <div class="kpi"><b style="font-size:19px">${money(fact)}</b><span>Entró</span></div>
       <div class="kpi"><b>${fin}</b><span>Servicios hechos</span></div>
       <div class="kpi"><b style="color:var(--e-can)">${can}</b><span>Cancelados</span></div>
       <div class="kpi no"><b>${no}</b><span>No asistieron</span></div>
     </div>
-    <div class="h3">Por sucursal</div>
+    <div class="small muted" style="margin:-4px 0 12px">Es la misma plata que muestra la
+      Caja de esos días. Incluye el recargo de las tarjetas: esa plata es del negocio
+      hasta que se le pague a la tarjeta.</div>
+    <div class="h3">${soloSuc?'Tu sucursal':'Por sucursal'}</div>
     <div class="card cardp">
       ${porSuc.map(x=>`<div style="margin-bottom:11px">
         <div style="display:flex;justify-content:space-between;font-size:13.5px;margin-bottom:4px">
