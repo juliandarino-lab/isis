@@ -230,33 +230,34 @@ label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:0 0
   -webkit-overflow-scrolling:touch;scrollbar-width:thin}
 .diahead{display:flex;background:var(--card);border-bottom:1.5px solid var(--line2);
   position:sticky;top:0;z-index:6;width:max-content;min-width:100%}
-.diahead .hc{width:44px;flex:none;position:sticky;left:0;background:var(--card);z-index:7}
-.pcol{flex:1 0 116px;padding:8px 6px;font-size:13px;font-weight:700;text-align:center;
+.diahead .hc{width:52px;flex:none;position:sticky;left:0;background:var(--card);z-index:7}
+.pcol{flex:1 0 124px;padding:9px 6px;font-size:13.5px;font-weight:700;text-align:center;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-left:1px solid var(--line)}
-.pcol span{display:block;font-size:10.5px;font-weight:500;color:var(--faint);font-variant-numeric:tabular-nums}
+.pcol span{display:block;font-size:11px;font-weight:500;color:var(--faint);font-variant-numeric:tabular-nums}
 .diabody{display:flex;position:relative;width:max-content;min-width:100%}
-.horas{width:44px;flex:none;position:sticky;left:0;z-index:4;background:var(--card);
+.horas{width:52px;flex:none;position:sticky;left:0;z-index:4;background:var(--card);
   border-right:1px solid var(--line2)}
-.hh{position:absolute;right:6px;font-size:11px;color:var(--muted);font-weight:600;
-  transform:translateY(-7px);font-variant-numeric:tabular-nums}
-.col{flex:1 0 116px;position:relative;border-left:1px solid var(--line);
-  background:repeating-linear-gradient(to bottom,transparent,transparent 55px,var(--line) 55px,var(--line) 56px)}
+.hh{position:absolute;right:7px;font-size:12px;color:var(--ink);font-weight:700;
+  transform:translateY(-8px);font-variant-numeric:tabular-nums}
+.hh.media{font-size:11px;font-weight:500;color:var(--faint)}
+.col{flex:1 0 124px;position:relative;border-left:1px solid var(--line);
+  background:repeating-linear-gradient(to bottom,transparent,transparent 43px,var(--line) 43px,var(--line) 44px)}
 .off{position:absolute;left:0;right:0;background:repeating-linear-gradient(45deg,#E9E9EE,#E9E9EE 4px,#E1E1E8 4px,#E1E1E8 8px)}
 .pau{position:absolute;left:0;right:0;background:#EFEBF7}
 .blqz{position:absolute;left:0;right:0;background:repeating-linear-gradient(45deg,#FBE4E4,#FBE4E4 4px,#F4D4D4 4px,#F4D4D4 8px)}
 .libre{position:absolute;left:2px;right:2px;border:1.5px dashed var(--freeln);border-radius:8px;
   background:var(--freebg);display:flex;align-items:center;justify-content:center;
-  color:var(--freetx);font-size:15px;font-weight:700}
-.libre span{font-size:10px;font-weight:600;opacity:.75}
-.ev{position:absolute;border-radius:8px;padding:4px 6px;overflow:hidden;color:#fff;
-  font-size:10.5px;line-height:1.2;box-shadow:0 1px 3px rgba(22,22,26,.25);
+  color:var(--freetx);font-size:17px;font-weight:700;cursor:pointer}
+.libre span{font-size:11.5px;font-weight:700;opacity:.9;text-align:center;line-height:1.25;padding:0 3px}
+.ev{position:absolute;border-radius:8px;padding:5px 7px;overflow:hidden;color:#fff;
+  font-size:11.5px;line-height:1.3;box-shadow:0 1px 3px rgba(22,22,26,.25);
   border:1px solid rgba(255,255,255,.3);text-align:left}
-.ev b{display:block;font-weight:700;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ev b{display:block;font-weight:700;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ev em{display:block;font-style:normal;opacity:.95;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ev i.pr{position:absolute;left:0;right:0;
   background:repeating-linear-gradient(45deg,rgba(255,255,255,.55),rgba(255,255,255,.55) 3px,transparent 3px,transparent 7px)}
-.ev.mini{padding:2px 5px;font-size:10px}
-.ev.mini b{font-size:10.5px}
+.ev.mini{padding:2px 6px;font-size:10.5px}
+.ev.mini b{font-size:11.5px}
 .ahora{position:absolute;left:0;right:0;height:2px;background:var(--acc);z-index:5;pointer-events:none}
 .ahora i{position:absolute;left:0;top:-4px;width:10px;height:10px;border-radius:50%;background:var(--acc)}
 .ahora b{position:absolute;left:12px;top:-9px;background:var(--acc);color:#fff;font-size:9.5px;
@@ -393,6 +394,12 @@ label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:0 0
 .fr .g span{font-size:12.5px;color:var(--muted)}
 .fr .pide{color:var(--acc)!important;font-weight:600;display:flex;align-items:center;gap:4px}
 .fr .fder{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex:0 0 auto}
+.fr.sigue{background:var(--freebg);border-radius:9px}
+.fr.trabada{opacity:.62}
+.chipsigue{display:inline-block;margin-left:7px;background:var(--freetx);color:#fff;
+  font-size:10px;font-weight:800;letter-spacing:.5px;padding:2px 6px;border-radius:6px;
+  vertical-align:middle}
+.fr .trab{color:var(--warn)!important;font-weight:600}
 .esp-ok{font-size:12px;color:var(--muted)}
 .esp-medio{font-size:12px;color:var(--warn);font-weight:600}
 .esp-alto{font-size:12px;color:var(--stop);font-weight:700}
@@ -2385,24 +2392,51 @@ function guardarTiquera(fid){
   save(); closeSheet(); render(); toast('Guardado');
 }
 
-/* cuando una profesional se desocupa: ¿a quién le toca? */
-function quienSigue(pid){
-  const p=byId(DB.profesionales,pid);
-  const mias = DB.asign.filter(a=>a.profId===pid).map(a=>a.areaId);
-  const cola = esperando()
-    .filter(f=>mias.includes(f.areaId) && (!f.profPedida || f.profPedida===pid))
-    .sort((a,b)=>mh(a.llegada)-mh(b.llegada));
-  sheet('¿Quién sigue para '+esc(p.nombre.split(' ')[0])+'?', `
-    ${cola.length?`<div class="listcard">${cola.map((f,i)=>{
-      const c=byId(DB.clientas,f.clientaId), sv=byId(DB.servicios,f.servicioId);
-      const a=byId(DB.areas,f.areaId), e=esperaDe(f);
-      return `<button class="lr" onclick="closeSheet();pasaAtenderse('${f.id}')">
-        <div class="av">${i===0?'1º':(i+1)+'º'}</div>
-        <div class="g"><b>${esc(c.nombre)}</b>
-          <span>${a?a.icono+' ':''}${esc(sv.nombre)} · ${e.txt}</span>
-          ${f.profPedida===pid?`<span class="tiny" style="color:var(--acc)">Pidió por ella</span>`:''}</div>
-        ${ic('chev','sm')}</button>`;}).join('')}</div>`
-    :`<div class="empty">No hay nadie esperando para lo que ella hace.</div>`}`);
+/* ============================================================
+   QUIÉN PUEDE PASAR AHORA
+
+   El orden ya está: es el de llegada. Pero el orden solo no
+   alcanza. Si la primera pidió por Ana y Ana está atendiendo, esa
+   clienta NO puede pasar todavía, aunque sea la primera. Si eso no
+   se ve, la recepcionista hace pasar mal a alguien o deja a una
+   profesional parada al pedo.
+
+   Así que en vez de un botón que hay que aprender, la lista se lee
+   sola: la primera que puede pasar lleva el cartel SIGUE, y la que
+   está esperando a alguien ocupado se ve en gris y dice por qué.
+   ============================================================ */
+/* está atendiendo a alguien ahora mismo */
+const profOcupada = pid => atendiendose().some(x=>x.profId===pid);
+
+/* quiénes podrían atender a esta clienta hoy */
+function profesPosibles(f){
+  return profesDelDia(f.areaId, hoy())
+    .filter(p=>profesDe(f.areaId, f.servicioId).some(x=>x.id===p.id));
+}
+/* ¿puede pasar ahora? Y si no, por qué */
+function puedePasar(f){
+  const posibles = profesPosibles(f);
+  if(!posibles.length) return {ok:false, razon:'Hoy no hay nadie para ese servicio'};
+  if(f.profPedida){
+    const p = byId(DB.profesionales, f.profPedida);
+    if(!posibles.some(x=>x.id===f.profPedida))
+      return {ok:false, razon:(p?p.nombre.split(' ')[0]:'Esa profesional')+' hoy no trabaja acá'};
+    if(profOcupada(f.profPedida))
+      return {ok:false, razon:'Espera a '+(p?p.nombre.split(' ')[0]:'ella')+' · está atendiendo'};
+    return {ok:true};
+  }
+  const libre = posibles.find(p=>!profOcupada(p.id));
+  if(!libre) return {ok:false, razon:'Todas ocupadas ahora'};
+  return {ok:true};
+}
+/* la primera de CADA área que puede pasar: esa es la que sigue */
+function lasQueSiguen(){
+  const marca = {};
+  esperando().sort((a,b)=>mh(a.llegada)-mh(b.llegada)).forEach(f=>{
+    if(marca[f.areaId]) return;
+    if(puedePasar(f).ok) marca[f.areaId] = f.id;
+  });
+  return new Set(Object.values(marca));
 }
 
 /* ---------- la pantalla ---------- */
@@ -2433,24 +2467,28 @@ function vFila(){
   const filtro = ST.filaArea && areas.some(a=>a.id===ST.filaArea) ? ST.filaArea : null;
   const pasa = f => !filtro || f.areaId===filtro;
 
+  const siguen = lasQueSiguen();
   const reng = (f, modo) => {
     const c=byId(DB.clientas,f.clientaId), sv=byId(DB.servicios,f.servicioId);
     const a=byId(DB.areas,f.areaId), e=esperaDe(f);
     const ped = f.profPedida?byId(DB.profesionales,f.profPedida):null;
     const pr  = f.profId?byId(DB.profesionales,f.profId):null;
-    return `<div class="fr fr-${modo}">
+    const pp  = modo==='esp' ? puedePasar(f) : {ok:true};
+    const sigue = siguen.has(f.id);
+    return `<div class="fr fr-${modo}${(modo==='esp'&&!pp.ok)?' trabada':''}${sigue?' sigue':''}">
       <div class="fic">${a?a.icono:'•'}</div>
       <div class="g">
-        <b>${esc(c?c.nombre:'—')}</b>
+        <b>${esc(c?c.nombre:'—')}${sigue?' <span class="chipsigue">SIGUE</span>':''}</b>
         <span>${esc(sv?sv.nombre:'')}${pr?' · '+esc(pr.nombre.split(' ')[0]):''}</span>
-        ${ped&&modo==='esp'?`<span class="pide">${ic('user','sm')} Pide por ${esc(ped.nombre.split(' ')[0])}</span>`:''}
+        ${(ped&&modo==='esp'&&pp.ok)?`<span class="pide">${ic('user','sm')} Pide por ${esc(ped.nombre.split(' ')[0])}</span>`:''}
+        ${(modo==='esp'&&!pp.ok)?`<span class="trab">${esc(pp.razon)}</span>`:''}
         ${f.tiquera?`<span class="tiny muted">Tiquera ${esc(f.tiquera)}</span>`:''}
       </div>
       <div class="fder">
         ${modo==='esp'?`<span class="esp-${e.nivel}">${e.txt}</span>`
           :`<span class="tiny muted">desde ${esc(f.desde||f.llegada)}</span>`}
         ${puedeEditarAgenda()?(modo==='esp'
-          ? `<button class="btn sm" onclick="pasaAtenderse('${f.id}')">Pasa</button>`
+          ? `<button class="btn sm ${pp.ok?'':'sec'}" onclick="pasaAtenderse('${f.id}')">Pasa</button>`
           : `<button class="btn sm ok" onclick="terminoFila('${f.id}')">Terminó</button>`):''}
       </div>
     </div>`;
@@ -2731,12 +2769,17 @@ function agendaDia(){
    ============================================================ */
 let GRID={desde:540,H:14,paso:15};
 function agendaDelDia(area, profes){
-  const H=14, PASO=15;
+  /* Antes esto era H=14: media hora entraba en 28 píxeles y el nombre salía en
+     letra de 10. En un celular no se leía y no se podía tocar. Ahora media hora
+     son 44 píxeles, que es alto de dedo, y la letra se lee. La grilla ocupa más
+     y se scrollea: mejor scrollear que no entender nada. */
+  const H=22, PASO=15;
   const hs = profes.map(p=>horarioDe(p.id, area.id, ST.fecha)).filter(Boolean);
   const dia = lineasDe(ST.fecha, l=>l.areaId===area.id && profes.some(p=>p.id===l.profId));
-  let desde = Math.min(...hs.map(h=>mh(h.desde)), ...dia.map(l=>mh(l.hora)), 9*60);
-  let hasta = Math.max(...hs.map(h=>mh(h.hasta)), ...dia.map(l=>mh(l.hora)+l.dur), 18*60);
-  desde = Math.floor(desde/60)*60; hasta = Math.ceil(hasta/60)*60;
+  const abre = mh(DB.cfg.abre||'09:00'), cierra = mh(DB.cfg.cierra||'19:30')+30;
+  let desde = Math.min(...hs.map(h=>mh(h.desde)), ...dia.map(l=>mh(l.hora)), abre);
+  let hasta = Math.max(...hs.map(h=>mh(h.hasta)), ...dia.map(l=>mh(l.hora)+l.dur), cierra);
+  desde = Math.floor(desde/30)*30; hasta = Math.ceil(hasta/30)*30;
   GRID = {desde, H, paso:PASO};
   const alto = (hasta-desde)/PASO*H;
   const y = m => (m-desde)/PASO*H;
@@ -2777,9 +2820,11 @@ function agendaDelDia(area, profes){
     if(puedeEditarAgenda() && h){
       huecosLibres(p.id, area.id, ST.fecha).forEach(([a,b])=>{
         const alt=(b-a)/PASO*H;
-        if(alt<16) return;
+        /* los turnos se dan cada media hora: un hueco de 15 minutos no se ofrece.
+           Igual la columna entera se puede tocar si hay que meter algo a presión. */
+        if(b-a < 30) return;
         libres += `<div class="libre" style="top:${y(a)+1}px;height:${alt-2}px">
-          ${alt>34?`+<span style="margin-left:4px">${durTxt(b-a)} libre</span>`:'+'}</div>`;
+          ${alt>=40?`<span>${hm(a)} · ${durTxt(b-a)} libre</span>`:'+'}</div>`;
       });
     }
     const eventos = ls.map(l=>{
@@ -2792,21 +2837,23 @@ function agendaDelDia(area, profes){
         proceso = `<i class="pr" style="top:${sv.trabajo1/PASO*H}px;height:${sv.proceso/PASO*H}px"></i>`;
       }
       const nom = cl?cl.nombre.split(' ')[0]+' '+((cl.nombre.split(' ')[1]||'')[0]||''):'';
-      return `<div class="ev ${alt<32?'mini':''}" style="top:${top}px;height:${alt-2}px;left:${left}%;width:${w}%;
-        background:${col};${l.estado==='fin'?'opacity:.75;':''}"
+      return `<div class="ev ${alt<30?'mini':''}" style="top:${top}px;height:${alt-2}px;left:${left}%;width:${w}%;
+        background:${col};${l.estado==='fin'?'opacity:.78;':''}"
         onclick="event.stopPropagation();abrirTurno('${l.visita.id}','${l.id}')">
         ${proceso}
         <b>${esc(nom)}</b>
-        ${alt>=32?`<em>${esc(sv?sv.nombre:'')}</em>`:''}
-        ${alt>=46?`<em>${l.hora} · ${EST[l.estado].n}</em>`:''}
+        ${alt>=40?`<em>${esc(sv?sv.nombre:'')}</em>`:''}
+        ${alt>=72?`<em>${EST[l.estado].n}</em>`:''}
       </div>`;
     }).join('');
     return `<div class="col" onclick="clicAgenda(event,'${p.id}')" style="height:${alto}px">
       ${fondo}${libres}${eventos}</div>`;
   };
 
+  /* de a media hora, que es como se dan los turnos acá */
   const horas=[];
-  for(let t=desde;t<=hasta;t+=60) horas.push(`<div class="hh" style="top:${y(t)}px">${hm(t)}</div>`);
+  for(let t=desde;t<=hasta;t+=30)
+    horas.push(`<div class="hh ${t%60?'media':''}" style="top:${y(t)}px">${hm(t)}</div>`);
 
   return `
     <div class="leyenda">
@@ -2842,8 +2889,9 @@ function clicAgenda(ev, profId){
   if(!puedeEditarAgenda()) return;
   const col = ev.currentTarget;
   const y = ev.clientY - col.getBoundingClientRect().top;
-  let min = GRID.desde + Math.floor(y/GRID.H)*GRID.paso;
-  min = Math.max(GRID.desde, min);
+  /* los turnos se dan a las en punto y a la media: el toque cae ahí */
+  let min = GRID.desde + Math.round(y/GRID.H)*GRID.paso;
+  min = Math.max(GRID.desde, Math.floor(min/30)*30);
   nuevoTurno(profId, hm(min));
 }
 
