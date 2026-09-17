@@ -6234,6 +6234,7 @@ function vCaja(){
       ${a.cierre?`<button class="btn sec" onclick="reabrirCaja()">Reabrir la caja</button>`
         :(esHoy?`<button class="btn pay" onclick="cerrarCaja()">${ic('lock','sm')} Cerrar la caja</button>`:'')}
       <button class="btn sec" onclick="corregirCaja()">${ic('edit','sm')} Corregir apertura</button>
+      <button class="btn sec" onclick="informeDelDia()">${ic('sobre','sm')} Informe del día en PDF</button>
     </div>
 
     <div class="h3">Por medio de pago</div>
@@ -6513,6 +6514,9 @@ function hacerCerrarCajaFin(contado, fondo, motivo){
     (contado-a.esperado?`, diferencia ${money(contado-a.esperado)} — ${motivo}`:', sin diferencia')+
     `. Se retiran ${money(retiro)} y quedan ${money(fondo)}.`);
   save(); closeSheet(); render(); toast('Caja cerrada');
+  /* Julián: cada cierre tiene que disparar el informe. Sale solo, con el
+     botón de WhatsApp a mano; si no lo quiere mandar, lo cierra y listo. */
+  setTimeout(()=>hojaInforme(hoy(), hoy(), ST.sucursalId, 'Caja cerrada · informe del día'), 300);
 }
 /* reabrir NO borra el cierre: lo anula, y el anterior queda a la vista */
 function reabrirCaja(){
@@ -6687,6 +6691,493 @@ function rangoPeriodo(k){
   if(k==='mes'){ const d=parseISO(H); return {desde:iso(new Date(d.getFullYear(),d.getMonth(),1)), hasta:H, n:'Este mes'}; }
   return {desde:addDays(H,-30), hasta:H, n:'Últimos 30 días'};
 }
+
+/* ============================================================
+   EL INFORME EN PDF
+   Cada vez que se cierra la caja tiene que salir un papel con
+   TODO el día, ordenado y entendible, para mandarlo por WhatsApp
+   o por mail. El mismo informe se puede sacar de una semana o de
+   un mes.
+   El PDF se arma acá adentro, a mano. No se baja nada de internet:
+   si el local se queda sin señal, el informe sale igual.
+   ============================================================ */
+
+/* ---------- el armador de PDF ---------- */
+const PDF_W = 595.28, PDF_H = 841.89;          /* A4 en puntos */
+/* cuánto mide cada letra en Helvetica (por mil), para poder alinear
+   los números a la derecha y cortar los textos largos */
+const PDF_ANCHOS = [278,278,355,556,556,889,667,191,333,333,389,584,278,333,278,278,
+556,556,556,556,556,556,556,556,556,556,278,278,584,584,584,556,
+1015,667,667,722,722,667,611,778,722,278,500,667,556,833,722,778,
+667,778,722,667,611,722,667,944,667,667,611,278,278,278,469,556,
+333,556,556,500,556,556,278,556,556,222,222,500,222,833,556,556,
+556,556,333,500,278,556,500,722,500,500,500,334,260,334,584];
+function pdfAncho(txt, tam){
+  let w = 0;
+  for(let i=0;i<txt.length;i++){
+    const c = txt.charCodeAt(i);
+    w += (c>=32 && c<=126) ? PDF_ANCHOS[c-32] : 556;
+  }
+  return w * tam / 1000;
+}
+/* corta un texto para que entre en el ancho que hay */
+function pdfCortar(txt, tam, max){
+  txt = String(txt==null?'':txt);
+  if(pdfAncho(txt, tam) <= max) return txt;
+  let t = txt;
+  while(t.length > 1 && pdfAncho(t+'…', tam) > max) t = t.slice(0,-1);
+  return t + '…';
+}
+function pdfEscapar(s){
+  return String(s).replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)');
+}
+
+function PDFHoja(){
+  const H = {
+    paginas: [], actual: null, y: 0,
+    margen: 40, alto: PDF_H, ancho: PDF_W,
+    pieTxt: '', encTxt: '',
+    get libre(){ return H.y - H.margen - 26; }
+  };
+  H.nueva = () => {
+    H.actual = [];
+    H.paginas.push(H.actual);
+    H.y = H.alto - H.margen;
+    if(H.paginas.length > 1 && H.encTxt){
+      H.texto(H.encTxt, H.margen, H.y-9, 8, false, [.45,.45,.45]);
+      H.y -= 22;
+    }
+    return H.actual;
+  };
+  H.lugar = (n) => { if(H.libre < n) H.nueva(); };
+  H.texto = (txt, x, y, tam, negrita, color) => {
+    const c = color || [0,0,0];
+    H.actual.push('BT /'+(negrita?'F2':'F1')+' '+tam+' Tf '+
+      c[0].toFixed(3)+' '+c[1].toFixed(3)+' '+c[2].toFixed(3)+' rg '+
+      x.toFixed(2)+' '+y.toFixed(2)+' Td ('+pdfEscapar(txt)+') Tj ET');
+  };
+  H.der = (txt, xFin, y, tam, negrita, color) =>
+    H.texto(txt, xFin - pdfAncho(String(txt), tam), y, tam, negrita, color);
+  H.linea = (x1,y1,x2,y2,gris,gordo) => {
+    const g = gris==null?.85:gris;
+    H.actual.push(g.toFixed(3)+' G '+(gordo||0.6)+' w '+
+      x1.toFixed(2)+' '+y1.toFixed(2)+' m '+x2.toFixed(2)+' '+y2.toFixed(2)+' l S');
+  };
+  H.caja = (x,y,an,al,color) => {
+    const c = color || [.95,.95,.95];
+    H.actual.push(c[0].toFixed(3)+' '+c[1].toFixed(3)+' '+c[2].toFixed(3)+' rg '+
+      x.toFixed(2)+' '+y.toFixed(2)+' '+an.toFixed(2)+' '+al.toFixed(2)+' re f');
+  };
+  H.nueva();
+  return H;
+}
+
+function pdfArmar(hoja){
+  /* numerar las páginas y poner el pie */
+  hoja.paginas.forEach((pg, i)=>{
+    const guardar = hoja.actual; hoja.actual = pg;
+    hoja.texto(hoja.pieTxt, hoja.margen, 26, 7.5, false, [.5,.5,.5]);
+    hoja.der('Página '+(i+1)+' de '+hoja.paginas.length,
+      hoja.ancho-hoja.margen, 26, 7.5, false, [.5,.5,.5]);
+    hoja.actual = guardar;
+  });
+  const objs = [];
+  const nPag = hoja.paginas.length;
+  /* 1 catálogo, 2 el índice de páginas, 3 y 4 las tipografías, después una
+     hoja por página y al final el contenido de cada hoja. Ojo con la cuenta:
+     si el contenido arranca una posición antes, la primera hoja apunta a la
+     última hoja en vez de a su texto y el archivo sale roto. */
+  const idCont = i => 5 + nPag + i;
+  objs[1] = '<</Type/Catalog/Pages 2 0 R>>';
+  objs[2] = '<</Type/Pages/Count '+nPag+'/Kids['+
+    hoja.paginas.map((_,i)=>(5+i)+' 0 R').join(' ')+']>>';
+  objs[3] = '<</Type/Font/Subtype/Type1/BaseFont/Helvetica/Encoding/WinAnsiEncoding>>';
+  objs[4] = '<</Type/Font/Subtype/Type1/BaseFont/Helvetica-Bold/Encoding/WinAnsiEncoding>>';
+  hoja.paginas.forEach((pg,i)=>{
+    objs[5+i] = '<</Type/Page/Parent 2 0 R/MediaBox[0 0 '+PDF_W.toFixed(2)+' '+PDF_H.toFixed(2)+']'+
+      '/Resources<</Font<</F1 3 0 R/F2 4 0 R>>>>/Contents '+idCont(i)+' 0 R>>';
+    const cont = pg.join('\n');
+    objs[idCont(i)] = '<</Length '+cont.length+'>>\nstream\n'+cont+'\nendstream';
+  });
+  let salida = '%PDF-1.4\n';
+  const pos = [];
+  for(let i=1;i<objs.length;i++){
+    pos[i] = salida.length;
+    salida += i+' 0 obj\n'+objs[i]+'\nendobj\n';
+  }
+  const xref = salida.length;
+  salida += 'xref\n0 '+objs.length+'\n0000000000 65535 f \n';
+  for(let i=1;i<objs.length;i++)
+    salida += String(pos[i]).padStart(10,'0')+' 00000 n \n';
+  salida += 'trailer\n<</Size '+objs.length+'/Root 1 0 R>>\nstartxref\n'+xref+'\n%%EOF';
+  const bytes = new Uint8Array(salida.length);
+  for(let i=0;i<salida.length;i++) bytes[i] = salida.charCodeAt(i) & 0xFF;
+  return new Blob([bytes], {type:'application/pdf'});
+}
+
+/* ---------- juntar los datos del informe ---------- */
+function datosInforme(desde, hasta, sid){
+  const suc = byId(DB.sucursales, sid) || {nombre:'—'};
+  const movs = (DB.mov||[]).filter(m=>m.sucursalId===sid && m.fecha>=desde && m.fecha<=hasta);
+  const vivos = movs.filter(m=>!m.anulado && m.tipo!=='anulacion');
+  const plus = m => signoMov(m)===1 ? m.importe : 0;
+  const menos= m => signoMov(m)===-1 ? m.importe : 0;
+
+  /* la plata, por medio de pago */
+  const medios = MEDIOS.map(x=>{
+    const de = vivos.filter(m=>m.medio===x.k);
+    return {k:x.k, n:x.n,
+      entra: de.reduce((s,m)=>s+plus(m),0),
+      sale:  de.reduce((s,m)=>s+menos(m),0)};
+  }).filter(x=>x.entra||x.sale);
+
+  const entro = vivos.reduce((s,m)=>s+plus(m),0);
+  const salio = vivos.reduce((s,m)=>s+menos(m),0);
+
+  /* los turnos y las atenciones sin turno, separados */
+  const vis = DB.visitas.filter(v=>v.sucursalId===sid && v.fecha>=desde && v.fecha<=hasta);
+  const reng = [];
+  vis.forEach(v=>{
+    const cl = byId(DB.clientas, v.clientaId);
+    const cobrado = v.pagos.filter(p=>!p.anulado).reduce((s,p)=>s+p.importe,0);
+    const medio = (v.pagos.find(p=>!p.anulado)||{}).medio || '';
+    v.lineas.forEach(l=>{
+      if(l.estado==='can') return;
+      const sv = byId(DB.servicios, l.servicioId) || {};
+      const pr = byId(DB.profesionales, l.profId) || {};
+      const ar = byId(DB.areas, l.areaId) || {};
+      reng.push({fecha:v.fecha, hora:l.hora||'', clienta:cl?cl.nombre:'—',
+        servicio:sv.nombre||'', prof:pr.nombre||'', area:ar.nombre||'',
+        estado:l.estado, sinTurno:!!v.sinTurno,
+        importe: v.lineas.length===1 ? cobrado : (l.precio-(l.descuento||0)),
+        medio: (MEDIOS.find(x=>x.k===medio)||{}).n || ''});
+    });
+  });
+  reng.sort((a,b)=> (a.fecha+a.hora).localeCompare(b.fecha+b.hora));
+  const conTurno = reng.filter(r=>!r.sinTurno);
+  const sinTurno = reng.filter(r=>r.sinTurno);
+  /* las de la fila van separadas por turno mañana y turno tarde, que es
+     como Nancy arma las dos planillas */
+  const manana = sinTurno.filter(r=>mh(r.hora||'00:00') < 14*60);
+  const tarde  = sinTurno.filter(r=>mh(r.hora||'00:00') >= 14*60);
+  /* y con el número de tiquera que le dio la profesional, si lo anotaron */
+  const tiqDe = {};
+  (DB.fila||[]).forEach(f=>{ if(f.visitaId && f.tiquera) tiqDe[f.visitaId]=f.tiquera; });
+  vis.forEach(v=>{ if(tiqDe[v.id]) sinTurno.forEach(r=>{}); });
+  const conTiq = r => r;
+
+  /* lo que salió */
+  const egresos = vivos.filter(m=>signoMov(m)===-1)
+    .sort((a,b)=>(a.fecha+a.hora).localeCompare(b.fecha+b.hora));
+  /* lo que se anuló o corrigió: tiene que estar a la vista */
+  const tocado = movs.filter(m=>m.anulado || m.tipo==='anulacion' || m.tipo==='ajuste')
+    .sort((a,b)=>(a.fecha+a.hora).localeCompare(b.fecha+b.hora));
+
+  /* cuánto hizo cada profesional */
+  const porProf = {};
+  reng.filter(r=>r.estado==='fin').forEach(r=>{
+    const p = porProf[r.prof] = porProf[r.prof] || {n:r.prof, cant:0, plata:0};
+    p.cant++; p.plata += r.importe;
+  });
+  const profs = Object.values(porProf).sort((a,b)=>b.plata-a.plata);
+
+  /* el arqueo, solo si es un día solo */
+  const unDia = desde===hasta;
+  const arq = unDia ? arqueoDe(desde, sid) : null;
+
+  return {suc, desde, hasta, unDia, arq, medios, entro, salio,
+    conTurno, sinTurno, manana, tarde, egresos, tocado, profs,
+    cancelados: reng.length, noVinieron: vis.reduce((s,v)=>
+      s + v.lineas.filter(l=>l.estado==='no').length, 0)};
+}
+
+/* ---------- dibujar el informe ---------- */
+function pdfInforme(d){
+  const H = PDFHoja();
+  const M = H.margen, AN = H.ancho - M*2, X2 = H.ancho - M;
+  const tit = d.unDia ? ('Cierre del '+fechaLarga(d.desde))
+                      : ('Informe del '+fechaCorta(d.desde)+' al '+fechaCorta(d.hasta));
+  H.encTxt = 'ISIS · '+d.suc.nombre+' · '+tit;
+  H.pieTxt = 'ISIS · '+d.suc.nombre+' · emitido el '+fechaCorta(hoy())+' a las '+horaAhora();
+
+  /* ---- encabezado ---- */
+  H.caja(M, H.y-46, AN, 46, [.13,.13,.16]);
+  H.texto('ISIS', M+12, H.y-21, 15, true, [1,1,1]);
+  H.texto(d.suc.nombre, M+58, H.y-21, 11, false, [.85,.85,.9]);
+  H.texto(tit, M+12, H.y-37, 10.5, false, [.85,.85,.9]);
+  H.y -= 62;
+
+  const kv = (et, val, negrita, color) => {
+    H.lugar(18);
+    H.texto(et, M+2, H.y, 9.5, false, [.3,.3,.3]);
+    H.der(val, X2-2, H.y, negrita?10.5:9.5, !!negrita, color);
+    H.y -= 15;
+  };
+  const titulo = (t) => {
+    H.lugar(40);
+    H.y -= 8;
+    H.texto(t.toUpperCase(), M, H.y, 9, true, [.1,.1,.15]);
+    H.y -= 5; H.linea(M, H.y, X2, H.y, .75, .8); H.y -= 14;
+  };
+
+  /* ---- la plata ---- */
+  titulo(d.unDia ? 'El cierre' : 'Resumen');
+  if(d.arq){
+    kv('Arrancó con', money(d.arq.fondo));
+    kv('Entró en el día', money(d.arq.entra));
+    kv('Salió en el día', '− '+money(d.arq.sale));
+    kv('Entró en efectivo', money(d.arq.efeIn));
+    kv('Salió en efectivo', '− '+money(d.arq.efeOut));
+    H.linea(M, H.y+8, X2, H.y+8, .85);
+    kv('Tenía que haber en el cajón', money(d.arq.esperado), true);
+    if(d.arq.cierre){
+      kv('Se contó', money(d.arq.contado), true);
+      const dif = d.arq.diferencia || 0;
+      kv(dif===0?'Diferencia':(dif>0?'SOBRÓ':'FALTÓ'),
+         dif===0?'cierra justo':money(Math.abs(dif)), true,
+         dif===0?[0,.45,.2]:[.75,.1,.1]);
+      if(d.arq.cierre.motivo) kv('Motivo de la diferencia', d.arq.cierre.motivo);
+      kv('Queda de fondo para mañana', money(d.arq.cierre.fondoQueda||0));
+      kv('Cerró', (d.arq.cierre.usuario||'—')+' a las '+(d.arq.cierre.hora||''));
+    } else {
+      kv('Estado', 'la caja quedó ABIERTA', true, [.75,.1,.1]);
+    }
+  } else {
+    kv('Entró', money(d.entro), true);
+    kv('Salió', '− '+money(d.salio), true);
+    H.linea(M, H.y+8, X2, H.y+8, .85);
+    kv('Queda', money(d.entro-d.salio), true);
+  }
+
+  /* ---- por medio de pago ---- */
+  titulo('Por medio de pago');
+  const cMed = [M+2, M+250, M+380, X2-2];
+  H.texto('Medio', cMed[0], H.y, 8.5, true, [.4,.4,.4]);
+  H.der('Entró', cMed[2], H.y, 8.5, true, [.4,.4,.4]);
+  H.der('Salió', cMed[3], H.y, 8.5, true, [.4,.4,.4]);
+  H.y -= 13;
+  d.medios.forEach(m=>{
+    H.lugar(16);
+    H.texto(m.n, cMed[0], H.y, 9.5);
+    H.der(m.entra?money(m.entra):'—', cMed[2], H.y, 9.5);
+    H.der(m.sale?('− '+money(m.sale)):'—', cMed[3], H.y, 9.5);
+    H.y -= 14;
+  });
+  H.linea(M, H.y+8, X2, H.y+8, .85);
+  H.texto('TOTAL', cMed[0], H.y, 9.5, true);
+  H.der(money(d.entro), cMed[2], H.y, 9.5, true);
+  H.der('− '+money(d.salio), cMed[3], H.y, 9.5, true);
+  H.y -= 16;
+
+  /* ---- una tabla de atenciones ---- */
+  const tablaAt = (tit2, filas, conFecha) => {
+    if(!filas.length) return;
+    titulo(tit2+'  ·  '+filas.length);
+    const x = conFecha
+      ? {a:M+2, b:M+56, c:M+96, d:M+240, e:M+352, f:X2-2}
+      : {a:M+2, b:M+2,  c:M+44, d:M+188, e:M+330, f:X2-2};
+    H.texto(conFecha?'Día':'', x.a, H.y, 8.5, true, [.4,.4,.4]);
+    H.texto('Hora', x.b===x.a?x.c-42:x.b, H.y, 8.5, true, [.4,.4,.4]);
+    H.texto('Clienta', x.c, H.y, 8.5, true, [.4,.4,.4]);
+    H.texto('Servicio', x.d, H.y, 8.5, true, [.4,.4,.4]);
+    H.texto('Profesional', x.e, H.y, 8.5, true, [.4,.4,.4]);
+    H.der('Cobrado', x.f, H.y, 8.5, true, [.4,.4,.4]);
+    H.y -= 12;
+    let suma = 0, alt = false;
+    filas.forEach(r=>{
+      H.lugar(16);
+      if(alt) H.caja(M, H.y-4, AN, 14, [.965,.965,.975]);
+      alt = !alt;
+      if(conFecha) H.texto(fechaCorta(r.fecha).slice(0,6), x.a, H.y, 8.5, false, [.4,.4,.4]);
+      H.texto(r.hora, x.b===x.a?x.c-42:x.b, H.y, 8.5);
+      H.texto(pdfCortar(r.clienta, 8.5, x.d-x.c-6), x.c, H.y, 8.5);
+      H.texto(pdfCortar(r.servicio, 8.5, x.e-x.d-6), x.d, H.y, 8.5);
+      H.texto(pdfCortar((r.prof||'').split(' ')[0], 8.5, 62), x.e, H.y, 8.5);
+      const et = r.estado==='fin' ? money(r.importe)
+               : r.estado==='no' ? 'no vino' : EST[r.estado] ? EST[r.estado].n.toLowerCase() : '';
+      H.der(et, x.f, H.y, 8.5, r.estado==='fin', r.estado==='fin'?null:[.55,.55,.55]);
+      if(r.estado==='fin') suma += r.importe;
+      H.y -= 14;
+    });
+    H.linea(M, H.y+8, X2, H.y+8, .85);
+    H.texto('Subtotal', x.a, H.y, 9, true);
+    H.der(money(suma), x.f, H.y, 9, true);
+    H.y -= 16;
+  };
+
+  const vf = !d.unDia;
+  tablaAt('Turnos agendados', d.conTurno, vf);
+  if(d.unDia){
+    tablaAt('Por orden de llegada · turno mañana', d.manana, false);
+    tablaAt('Por orden de llegada · turno tarde', d.tarde, false);
+  } else {
+    tablaAt('Por orden de llegada', d.sinTurno, true);
+  }
+
+  /* ---- lo que salió ---- */
+  if(d.egresos.length){
+    titulo('Lo que salió');
+    d.egresos.forEach(g=>{
+      H.lugar(16);
+      H.texto((d.unDia?'':fechaCorta(g.fecha).slice(0,6)+'  ')+(g.hora||''), M+2, H.y, 8.5, false, [.4,.4,.4]);
+      H.texto(pdfCortar(nombreMov(g)+(g.concepto?' · '+g.concepto:''), 8.5, 230), M+70, H.y, 8.5);
+      H.texto((MEDIOS.find(x=>x.k===g.medio)||{}).n||'', M+310, H.y, 8.5, false, [.4,.4,.4]);
+      H.texto(pdfCortar(g.usuario||'', 8.5, 70), M+385, H.y, 8.5, false, [.4,.4,.4]);
+      H.der('− '+money(g.importe), X2-2, H.y, 8.5, true, [.6,.1,.1]);
+      H.y -= 14;
+    });
+    H.linea(M, H.y+8, X2, H.y+8, .85);
+    H.texto('Total que salió', M+2, H.y, 9, true);
+    H.der('− '+money(d.salio), X2-2, H.y, 9, true);
+    H.y -= 16;
+  }
+
+  /* ---- anulaciones y correcciones ---- */
+  if(d.tocado.length){
+    titulo('Anulaciones y correcciones');
+    d.tocado.forEach(m=>{
+      H.lugar(16);
+      H.texto((d.unDia?'':fechaCorta(m.fecha).slice(0,6)+'  ')+(m.hora||''), M+2, H.y, 8.5, false, [.4,.4,.4]);
+      H.texto(pdfCortar(nombreMov(m)+(m.concepto?' · '+m.concepto:''), 8.5, 200), M+70, H.y, 8.5);
+      H.texto(pdfCortar(m.motivo||'sin motivo', 8.5, 140), M+290, H.y, 8.5, false, [.45,.45,.45]);
+      H.texto(pdfCortar(m.usuario||'', 8.5, 70), M+435, H.y, 8.5, false, [.4,.4,.4]);
+      H.y -= 14;
+    });
+    H.y -= 4;
+  }
+
+  /* ---- cada profesional ---- */
+  if(d.profs.length){
+    titulo('Lo que hizo cada profesional');
+    H.texto('Profesional', M+2, H.y, 8.5, true, [.4,.4,.4]);
+    H.der('Servicios', M+330, H.y, 8.5, true, [.4,.4,.4]);
+    H.der('Generó', X2-2, H.y, 8.5, true, [.4,.4,.4]);
+    H.y -= 13;
+    d.profs.forEach(p=>{
+      H.lugar(16);
+      H.texto(pdfCortar(p.n, 9.5, 260), M+2, H.y, 9.5);
+      H.der(String(p.cant), M+330, H.y, 9.5);
+      H.der(money(p.plata), X2-2, H.y, 9.5);
+      H.y -= 14;
+    });
+    H.y -= 4;
+  }
+
+  /* ---- la firma ---- */
+  H.lugar(70);
+  H.y -= 16;
+  H.linea(M, H.y, M+190, H.y, .6, .8);
+  H.linea(X2-190, H.y, X2, H.y, .6, .8);
+  H.y -= 11;
+  H.texto('Quien cerró la caja', M, H.y, 8, false, [.45,.45,.45]);
+  H.der('Quien recibe la plata', X2, H.y, 8, false, [.45,.45,.45]);
+
+  return pdfArmar(H);
+}
+
+/* ---------- mandarlo ---------- */
+function nombreInforme(d){
+  const l = d.suc.nombre.replace(/[^a-zA-Z0-9]+/g,'-');
+  return 'ISIS-'+l+'-'+(d.unDia?d.desde:(d.desde+'-al-'+d.hasta))+'.pdf';
+}
+function resumenTexto(d){
+  const L = [];
+  L.push('*ISIS · '+d.suc.nombre+'*');
+  L.push(d.unDia ? ('Cierre del '+fechaLarga(d.desde))
+                 : ('Del '+fechaCorta(d.desde)+' al '+fechaCorta(d.hasta)));
+  L.push('');
+  L.push('Entró: '+money(d.entro));
+  L.push('Salió: '+money(d.salio));
+  if(d.arq){
+    L.push('En el cajón tenía que haber: '+money(d.arq.esperado));
+    if(d.arq.cierre){
+      L.push('Se contó: '+money(d.arq.contado));
+      const df = d.arq.diferencia||0;
+      L.push(df===0 ? 'Cierra justo.' : (df>0?'Sobró ':'Faltó ')+money(Math.abs(df)));
+    }
+  }
+  L.push('');
+  L.push('Turnos: '+d.conTurno.length+' · por orden de llegada: '+d.sinTurno.length);
+  L.push('');
+  L.push('El detalle completo va en el PDF.');
+  return L.join('\n');
+}
+
+let PDF_ULT = null;                   /* el último informe armado */
+function informeDe(desde, hasta, sid){
+  const d = datosInforme(desde, hasta, sid || ST.sucursalId);
+  PDF_ULT = {d, blob: pdfInforme(d), nombre: nombreInforme(d)};
+  return PDF_ULT;
+}
+function bajarInforme(){
+  if(!PDF_ULT) return;
+  const u = URL.createObjectURL(PDF_ULT.blob);
+  const a = document.createElement('a');
+  a.href = u; a.download = PDF_ULT.nombre; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ a.remove(); URL.revokeObjectURL(u); }, 2000);
+  toast('Informe guardado');
+}
+async function mandarInforme(){
+  if(!PDF_ULT) return;
+  const f = new File([PDF_ULT.blob], PDF_ULT.nombre, {type:'application/pdf'});
+  /* si el teléfono sabe compartir archivos, sale el menú con WhatsApp
+     y el PDF va adjunto de una */
+  if(navigator.canShare && navigator.canShare({files:[f]})){
+    try{
+      await navigator.share({files:[f], title:PDF_ULT.nombre, text:resumenTexto(PDF_ULT.d)});
+      return;
+    }catch(e){ if(e && e.name==='AbortError') return; }
+  }
+  /* si no sabe, se guarda el PDF y se abre WhatsApp con el resumen escrito,
+     para adjuntarlo a mano */
+  bajarInforme();
+  window.open('https://wa.me/?text='+encodeURIComponent(resumenTexto(PDF_ULT.d)), '_blank');
+}
+function mailInforme(){
+  if(!PDF_ULT) return;
+  bajarInforme();
+  const asunto = 'ISIS · '+PDF_ULT.d.suc.nombre+' · '+
+    (PDF_ULT.d.unDia ? fechaCorta(PDF_ULT.d.desde)
+      : fechaCorta(PDF_ULT.d.desde)+' al '+fechaCorta(PDF_ULT.d.hasta));
+  const para = DB.cfg.mailInformes || '';
+  window.open('mailto:'+encodeURIComponent(para)+'?subject='+encodeURIComponent(asunto)+
+    '&body='+encodeURIComponent(resumenTexto(PDF_ULT.d).replace(/\*/g,'')+
+    '\n\n(Adjuntá el PDF que se acaba de guardar: '+PDF_ULT.nombre+')'), '_blank');
+}
+
+/* la pantalla que aparece con el informe listo */
+function hojaInforme(desde, hasta, sid, tituloExtra){
+  if(!puedeCobrar() && perm('reportes')==='no'){ toast('No tenés acceso'); return; }
+  let r;
+  try{ r = informeDe(desde, hasta, sid); }
+  catch(e){ toast('No se pudo armar el informe'); return; }
+  const d = r.d;
+  const kb = Math.max(1, Math.round(r.blob.size/1024));
+  sheet(tituloExtra || 'Informe listo', `
+    <div class="card cardp" style="margin-bottom:13px">
+      <div class="kv"><span class="muted">${esc(d.suc.nombre)}</span>
+        <b>${d.unDia?fechaCorta(d.desde):fechaCorta(d.desde)+' al '+fechaCorta(d.hasta)}</b></div>
+      <div class="kv"><span class="muted">Entró</span><b>${money(d.entro)}</b></div>
+      <div class="kv"><span class="muted">Salió</span><b>− ${money(d.salio)}</b></div>
+      <div class="kv"><span class="muted">Turnos</span><b>${d.conTurno.length}</b></div>
+      <div class="kv"><span class="muted">Por orden de llegada</span><b>${d.sinTurno.length}</b></div>
+      ${d.arq&&d.arq.cierre?`<div class="kv"><span class="muted">Diferencia de caja</span>
+        <b style="color:${d.arq.diferencia?'var(--stop)':'var(--ok)'}">${
+          d.arq.diferencia?money(Math.abs(d.arq.diferencia)):'cierra justo'}</b></div>`:''}
+    </div>
+    <button class="btn pay" onclick="mandarInforme()">${ic('sobre','sm')} Mandar por WhatsApp</button>
+    <button class="btn sec" style="margin-top:8px" onclick="bajarInforme()">Guardar el PDF (${kb} KB)</button>
+    <button class="btn sec" style="margin-top:8px" onclick="mailInforme()">Mandar por mail</button>
+    <div class="small muted" style="margin-top:11px">El PDF tiene el día entero: los turnos, lo que se
+      atendió por orden de llegada separado en turno mañana y turno tarde, lo que salió, las
+      anulaciones con su motivo y lo que hizo cada profesional.</div>`);
+}
+function informeDelDia(){ hojaInforme(CAJA_FECHA(), CAJA_FECHA(), ST.sucursalId); }
+function informePeriodo(k){
+  const R = rangoPeriodo(k);
+  hojaInforme(R.desde, R.hasta, ST.sucursalId, 'Informe · '+R.n);
+}
+
 function vReportes(){
   const nivel = perm('reportes');
   /* recepción ve el movimiento del día y nada más: eso no cambia */
@@ -6745,6 +7236,8 @@ function vReportes(){
     </div>`}
     <div class="small muted" style="margin-bottom:11px">${fijo?'Movimiento de hoy':esc(R.n)+' · del '+fechaCorta(R.desde)+' al '+fechaCorta(R.hasta)}${
       nivel==='area'?' · solo '+esc(nombreAreasDe()||'tu área'):''}</div>
+    ${puedeCobrar()?`<button class="btn sec" style="margin-bottom:13px"
+      onclick="informePeriodo('${per}')">${ic('sobre','sm')} Informe en PDF de ${esc((R.n||'').toLowerCase())}</button>`:''}
     <div class="kpis" style="grid-template-columns:1fr 1fr">
       <div class="kpi"><b style="font-size:19px">${money(fact)}</b><span>Entró</span></div>
       <div class="kpi"><b>${fin}</b><span>Servicios hechos</span></div>
