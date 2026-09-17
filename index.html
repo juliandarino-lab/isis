@@ -61,6 +61,35 @@ label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:0 0
 
 .pad{padding:14px}
 .h2{font-size:19px;font-weight:700;letter-spacing:-.02em;margin:0 0 12px}
+.plist{display:flex;flex-direction:column;gap:7px;margin-bottom:15px}
+.prow{display:flex;align-items:center;gap:10px;width:100%;background:var(--card);
+  border:1px solid var(--line);border-radius:12px;padding:11px 13px;text-align:left;
+  font:inherit;cursor:pointer;min-height:56px}
+.prow:active{background:var(--freebg)}
+.prow .g{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.prow .g b{font-size:14.5px;color:var(--ink);line-height:1.2}
+.prow .g span{font-size:11.5px;color:var(--muted)}
+.prow .pp{text-align:right;flex:0 0 auto;display:flex;flex-direction:column;gap:1px}
+.prow .pp b{font-size:17px;color:var(--ink);line-height:1.1}
+.prow .pp i{font-style:normal;font-size:10.5px;color:var(--muted)}
+.preprecio{display:flex;flex-direction:column;gap:8px}
+.preprecio>div{display:flex;justify-content:space-between;align-items:baseline;
+  background:var(--freebg);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.preprecio>div span{font-size:12px;color:var(--muted)}
+.preprecio>div b{font-size:22px;color:var(--ink)}
+.preprecio>div.tar{background:var(--card)}
+.preprecio>div.tar b{font-size:17px}
+.precuenta{position:fixed;left:0;right:0;bottom:70px;z-index:60;
+  display:flex;gap:8px;padding:0 14px;max-width:560px;margin:0 auto}
+.pcg{flex:1;display:flex;flex-direction:column;gap:2px;background:var(--pri);color:#fff;
+  border:0;border-radius:13px;padding:11px 14px;text-align:left;font:inherit;cursor:pointer;
+  box-shadow:0 6px 20px rgba(0,0,0,.22)}
+.pcg b{font-size:14px}
+.pcg span{font-size:11.5px;opacity:.9}
+.pcx{flex:0 0 46px;background:var(--card);border:1px solid var(--line);border-radius:13px;
+  color:var(--muted);cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.14)}
+.linkb{background:none;border:0;padding:0;color:var(--pri);font:inherit;
+  text-decoration:underline;cursor:pointer}
 .h3{font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
   color:var(--faint);margin:22px 0 9px}
 .muted{color:var(--muted)}
@@ -3875,38 +3904,181 @@ function chipsSucursal(){
    cuánto salía un servicio tenía que empezar a cargar un turno:
    la lista vivía en Configuración, donde ella no entra.
    ============================================================ */
+/* ============================================================
+   LA LISTA DE PRECIOS — para contestar el teléfono.
+   Suena el teléfono y preguntan "¿cuánto sale el perfilado?".
+   La recepcionista no sabe (ni tiene por qué saber) en qué área
+   está cargado ese servicio, así que las pestañas por área eran
+   un paso de más: primero adivinar el área y después buscar.
+   Ahora está todo junto, se escribe y aparece. Y como por
+   teléfono casi siempre preguntan por DOS cosas juntas
+   ("perfilado y pestañas"), se pueden ir sumando y abajo queda
+   el total, de contado y con tarjeta.
+   ============================================================ */
+let PRE = {suma:[], verTodo:false};
+
+function preServiciosVisibles(){
+  /* todo lo que se hace en esta sucursal; si además puede ver el negocio
+     entero, también lo de las otras (pasa que llaman a un local preguntando
+     por algo que solo se hace en otro) */
+  const mias = areasDeSucursal().map(a=>a.id);
+  const otras = puedeCambiarSucursal()
+    ? DB.areas.filter(a=>a.activa && !mias.includes(a.id)).map(a=>a.id) : [];
+  return {mias, otras};
+}
+function preBuscar(q){
+  const {mias, otras} = preServiciosVisibles();
+  const t = (q||'').toLowerCase().trim();
+  const ok = s => s.activo && (!t || s.nombre.toLowerCase().includes(t) ||
+    ((byId(DB.areas,s.areaId)||{}).nombre||'').toLowerCase().includes(t));
+  return {
+    aca:   DB.servicios.filter(s=>mias.includes(s.areaId) && ok(s)),
+    afuera:DB.servicios.filter(s=>otras.includes(s.areaId) && ok(s))
+  };
+}
+const preTotal = () => PRE.suma.reduce((a,id)=>{
+  const s = byId(DB.servicios,id); return a + (s?s.contado:0); },0);
+const preDur = () => PRE.suma.reduce((a,id)=>{
+  const s = byId(DB.servicios,id); return a + (s?s.dur:0); },0);
+
+function preSumar(id){
+  PRE.suma.push(id);
+  render();
+}
+function preSacar(i){ PRE.suma.splice(i,1); render(); }
+function preLimpiar(){ PRE.suma = []; render(); }
+
+/* la ficha de un servicio: todo lo que puede preguntar la clienta */
+function preFicha(id){
+  const s = byId(DB.servicios,id); if(!s) return;
+  const ar = byId(DB.areas,s.areaId) || {};
+  const su = byId(DB.sucursales, ar.sucursalId) || {};
+  /* el mismo servicio puede estar en varios locales */
+  const iguales = DB.servicios.filter(x=>x.activo && x.nombre===s.nombre);
+  const donde = iguales.map(x=>{
+    const a = byId(DB.areas,x.areaId)||{};
+    return {suc:(byId(DB.sucursales,a.sucursalId)||{}).nombre||'—',
+      precio:x.contado, mismo:x.contado===s.contado};
+  });
+  const quienes = profesDe(s.areaId, s.id).map(p=>p.nombre.split(' ')[0]);
+  const conT = ar.porTurno!==false;
+  sheet(s.nombre, `
+    <div class="preprecio">
+      <div><span>De contado</span><b>${money(s.contado)}</b></div>
+      <div class="tar"><span>Con tarjeta o transferencia</span><b>${money(precioLista(s.contado))}</b></div>
+    </div>
+    <div class="card cardp" style="margin:13px 0">
+      <div class="kv"><span class="muted">Cuánto tarda</span><b>${s.dur} min</b></div>
+      ${s.proceso>0?`<div class="kv"><span class="muted">De esos, libre en el medio</span><b>${s.proceso} min</b></div>`:''}
+      <div class="kv"><span class="muted">Área</span><b>${ar.icono||''} ${esc(ar.nombre||'')}</b></div>
+      <div class="kv"><span class="muted">Cómo se atiende</span>
+        <b>${conT?'Con turno':'Por orden de llegada'}</b></div>
+      ${quienes.length?`<div class="kv"><span class="muted">Lo hacen</span>
+        <b style="text-align:right">${esc(quienes.slice(0,4).join(', '))}${quienes.length>4?' y '+(quienes.length-4)+' más':''}</b></div>`:''}
+    </div>
+    ${donde.length>1?`<div class="h3">En qué locales</div>
+    <div class="listcard" style="margin-bottom:13px">
+      ${donde.map(d=>`<div class="lr"><div class="g"><b>${esc(d.suc)}</b></div>
+        <div class="r"><b style="color:var(--ink)">${money(d.precio)}</b></div></div>`).join('')}
+    </div>`:''}
+    <button class="btn" onclick="closeSheet();preSumar('${s.id}')">${ic('plus','sm')} Sumar a la cuenta</button>
+    ${(conT&&puedeEditarAgenda())?`<button class="btn sec" style="margin-top:8px"
+      onclick="closeSheet();nuevoTurnoCon('${s.id}')">Dar un turno de esto</button>`:''}
+    ${puedeConfig()?`<button class="btn sec" style="margin-top:8px"
+      onclick="closeSheet();go('servicios')">Cambiar el precio</button>`:''}`);
+}
+/* dar turno directo desde el precio: es lo que sigue después de contestar */
+function nuevoTurnoCon(svId){
+  const s = byId(DB.servicios, svId); if(!s) return;
+  const ar = byId(DB.areas, s.areaId);
+  if(ar && ar.sucursalId!==ST.sucursalId && puedeVerSucursal(ar.sucursalId))
+    ST.sucursalId = ar.sucursalId;
+  ST.view='agenda'; ST.areaId = s.areaId;
+  /* el servicio ya lo sabemos: se saltea el paso de elegirlo y va derecho
+     a elegir la profesional */
+  NT.clientaId=null; NT.profId=null; NT.hora=null; NT.visitaId=null;
+  NT.motivo=''; NT.aviso=null; NT.espera=false;
+  NT.areaId = s.areaId; NT.servicioId = s.id;
+  render();
+  pasoProfesional();
+}
+
+function preRenglon(s, lejos){
+  const ar = byId(DB.areas,s.areaId) || {};
+  const su = lejos ? (byId(DB.sucursales, ar.sucursalId)||{}).nombre : '';
+  return `<button class="prow" onclick="preFicha('${s.id}')">
+    <div class="g"><b>${esc(s.nombre)}</b>
+      <span>${s.dur} min${su?' · '+esc(su):''}${ar.porTurno===false?' · por orden de llegada':''}</span></div>
+    <div class="pp"><b>${money(s.contado)}</b>
+      <i>${money(precioLista(s.contado))} con tarjeta</i></div>
+  </button>`;
+}
+
 function vPrecios(){
-  const areas = areasDeSucursal();
-  if(!areas.length) return `<div class="empty">Esta sucursal todavía no tiene áreas cargadas.</div>`;
-  const q = (ST.qp||'').toLowerCase().trim();
-  if(!ST.areaId || !areas.find(a=>a.id===ST.areaId)) ST.areaId = areas[0].id;
-  /* con el buscador se busca en TODAS las áreas: por teléfono nadie pregunta por área */
-  const svs = q
-    ? DB.servicios.filter(x=>x.activo && areas.some(a=>a.id===x.areaId) && x.nombre.toLowerCase().includes(q))
-    : DB.servicios.filter(x=>x.activo && x.areaId===ST.areaId);
-  return `
-    ${q?'':`<div class="tabs" style="top:44px">
-      ${areas.map(a=>`<button class="tab ${a.id===ST.areaId?'on':''}"
-        onclick="ST.areaId='${a.id}';render()">${a.icono} ${esc(a.nombre)}</button>`).join('')}
-    </div>`}
-    <div class="pad">
-      <div class="f"><input id="pq" placeholder="Buscar un servicio" value="${esc(ST.qp||'')}"
-        oninput="ST.qp=this.value;render();const e=document.getElementById('pq');if(e){e.focus();e.setSelectionRange(e.value.length,e.value.length);}"
-        autocomplete="off"></div>
-      <div class="small muted" style="margin:-4px 0 12px">
-        El primer precio es el de <b>contado en efectivo</b>. El de abajo es el que se cobra con
-        tarjeta, transferencia o Mercado Pago.</div>
-      ${svs.length?`<div class="listcard">${svs.map(x=>{
-        const ar = byId(DB.areas, x.areaId) || {};
-        return `<div class="lr">
-          <div class="g"><b>${esc(x.nombre)}</b>
-            <span>${q?esc((ar.icono||'')+' '+(ar.nombre||''))+' · ':''}${x.dur} min${x.proceso>0?' (queda '+x.proceso+'′ libre en el medio)':''}</span></div>
-          <div class="r"><b style="font-size:15px;color:var(--ink)">${money(x.contado)}</b>
-            <div class="tiny">con recargo ${money(precioLista(x.contado))}</div></div>
-        </div>`;}).join('')}</div>`
-      :`<div class="empty">No hay ningún servicio con ese nombre.</div>`}
-      ${puedeConfig()?`<button class="btn sec" style="margin-top:14px" onclick="go('servicios')">Cambiar precios</button>`:''}
-    </div>`;
+  const q = ST.qp || '';
+  const {aca, afuera} = preBuscar(q);
+  if(!aca.length && !afuera.length && !q)
+    return `<div class="empty">Todavía no hay servicios cargados.</div>`;
+
+  /* agrupadas por área, para que se pueda recorrer de arriba abajo
+     sin tener que elegir una pestaña primero */
+  const porArea = {};
+  aca.forEach(s=>{ (porArea[s.areaId] = porArea[s.areaId] || []).push(s); });
+  const areas = areasDeSucursal().filter(a=>porArea[a.id]);
+
+  const n = PRE.suma.length;
+  const tot = preTotal();
+
+  return `<div class="pad" style="padding-bottom:${n?'96px':'20px'}">
+    <div class="f"><input id="pq" placeholder="Escribí el servicio: perfilado, pestañas, uñas…"
+      value="${esc(q)}" autocomplete="off"
+      oninput="ST.qp=this.value;render();const e=document.getElementById('pq');if(e){e.focus();e.setSelectionRange(e.value.length,e.value.length);}"></div>
+
+    ${q?`<div class="small muted" style="margin:-4px 0 11px">${aca.length+afuera.length} servicio${(aca.length+afuera.length)===1?'':'s'} con "${esc(q)}"
+      ${aca.length||afuera.length?`· <button class="linkb" onclick="ST.qp='';render()">ver todo</button>`:''}</div>`
+     :`<div class="small muted" style="margin:-4px 0 11px">El precio grande es <b>de contado</b>.
+      Abajo, lo que sale con tarjeta, transferencia o Mercado Pago.</div>`}
+
+    ${(!aca.length && !afuera.length)
+      ? `<div class="empty">No hay ningún servicio que se llame así.</div>` : ''}
+
+    ${areas.map(a=>`
+      <div class="h3">${a.icono} ${esc(a.nombre)}</div>
+      <div class="plist">${porArea[a.id].map(s=>preRenglon(s,false)).join('')}</div>`).join('')}
+
+    ${afuera.length?`
+      <div class="h3">En los otros locales</div>
+      <div class="plist">${afuera.map(s=>preRenglon(s,true)).join('')}</div>`:''}
+
+    ${puedeConfig()?`<button class="btn sec" style="margin-top:14px" onclick="go('servicios')">Cambiar precios</button>`:''}
+  </div>
+
+  ${n?`<div class="precuenta">
+    <button class="pcx" onclick="preLimpiar()" aria-label="Vaciar la cuenta">${ic('x','sm')}</button>
+    <button class="pcg" onclick="preVerCuenta()">
+      <b>${n} servicio${n===1?'':'s'} · ${preDur()} min</b>
+      <span>${money(tot)} de contado · ${money(precioLista(tot))} con tarjeta</span>
+    </button>
+  </div>`:''}`;
+}
+
+function preVerCuenta(){
+  const tot = preTotal();
+  sheet('La cuenta', `
+    <div class="listcard" style="margin-bottom:13px">
+      ${PRE.suma.map((id,i)=>{ const s=byId(DB.servicios,id)||{};
+        return `<div class="lr"><div class="g"><b>${esc(s.nombre||'—')}</b>
+          <span>${s.dur||0} min</span></div>
+          <div class="r"><b style="color:var(--ink)">${money(s.contado||0)}</b></div>
+          <button class="btn xs sec" onclick="preSacar(${i});closeSheet();preVerCuenta()">Sacar</button>
+        </div>`;}).join('')}
+    </div>
+    <div class="preprecio">
+      <div><span>De contado</span><b>${money(tot)}</b></div>
+      <div class="tar"><span>Con tarjeta o transferencia</span><b>${money(precioLista(tot))}</b></div>
+    </div>
+    <div class="small muted" style="margin:11px 0 0">Tardan ${preDur()} minutos en total.</div>
+    <button class="btn sec" style="margin-top:13px" onclick="preLimpiar();closeSheet()">Empezar de nuevo</button>`);
 }
 
 /* ============================================================
