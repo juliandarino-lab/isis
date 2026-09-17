@@ -933,55 +933,78 @@ function seed(){
          adelante se va vaciando, como pasa de verdad */
       /* el día tiene que verse lleno PERO con lugar: si no queda ningún
          hueco, la recepcionista no puede mostrar dónde dar un turno */
-      const hueco = dd < 0 ? 0.30 : dd === 0 ? 0.28
-                  : dd <= 4 ? 0.34 : dd <= 7 ? 0.48 : 0.65;
+      /* En las áreas con turno TIENE que quedar lugar libre: si la agenda
+         de hoy está llena hasta el tope, la recepcionista no puede mostrar
+         dónde dar un turno y la pantalla no sirve para nada. */
+      const hueco = !area.porTurno
+        ? (dd < 0 ? 0.26 : dd === 0 ? 0.24 : dd <= 4 ? 0.30 : 0.50)
+        : (dd < 0 ? 0.34 : dd === 0 ? 0.38 : dd <= 4 ? 0.42 : dd <= 7 ? 0.52 : 0.66);
       let t = mh(ho.desde);
       while(t < finTurno - 20){
         if(t >= pd && t < ph){ t = ph; continue; }
         if(chance(hueco)){ t += 15; continue; }
-        const sv = elegir(svs);
-        if(t + sv.dur > finTurno) break;
-        if(t < pd && t + sv.dur > pd){ t = ph; continue; }   /* no pisar el almuerzo */
+        /* La que viene a depilarse NO se hace una sola zona: se hace media
+           pierna, axilas y cavado en la misma sentada. Lo mismo la que se
+           hace manos y pies. Por eso una atención por orden de llegada
+           lleva varios renglones, no uno. */
+        const cuantos = area.porTurno ? 1
+          : (chance(.42) ? 1 : chance(.62) ? 2 : 3);
+        const elegidos = [];
+        for(let q=0; q<cuantos; q++){
+          const cand = elegir(svs);
+          if(!elegidos.some(x=>x.id===cand.id)) elegidos.push(cand);
+        }
+        const sv = elegidos[0];
+        const durTot = elegidos.reduce((a,x)=>a+x.dur,0);
+        const totTot = elegidos.reduce((a,x)=>a+x.contado,0);
+        if(t + durTot > finTurno) break;
+        if(t < pd && t + durTot > pd){ t = ph; continue; }   /* no pisar el almuerzo */
         const k = as.profId+'|'+f;
-        (libre[k] = libre[k] || []).push([t, t+sv.dur]);
+        (libre[k] = libre[k] || []).push([t, t+durTot]);
 
         let estado;
         if(dd < 0)       estado = chance(.05) ? 'can' : chance(.045) ? 'no' : 'fin';
         else if(dd > 0)  estado = (dd<=2 && chance(.65)) ? 'conf' : 'res';
         else {
-          if(t + sv.dur <= ahora - 10)        estado = chance(.04) ? 'no' : 'fin';
+          if(t + durTot <= ahora - 10)        estado = chance(.04) ? 'no' : 'fin';
           else if(t <= ahora + 5)             estado = chance(.72) ? 'serv' : 'lleg';
           else if(t - ahora <= 40)            estado = chance(.45) ? 'lleg' : 'conf';
           else                                estado = chance(.55) ? 'conf' : 'res';
           if(estado!=='fin' && estado!=='serv' && chance(.035)) estado = 'can';
         }
 
-        const desc = (estado==='fin' && chance(.08)) ? Math.round(sv.contado*0.1/500)*500 : 0;
+        const desc = (estado==='fin' && chance(.08)) ? Math.round(totTot*0.1/500)*500 : 0;
+        let reloj = t;
         const v = { id:uid('vi'), clientaId: elegir(CLI), sucursalId: area.sucursalId,
           fecha: f, creada: new Date(parseISO(f).getTime() - 86400000*(1+Math.floor(rnd()*9))).toISOString(),
-          lineas:[{ id:uid('ln'), servicioId:sv.id, profId:as.profId, areaId:as.areaId,
-            hora: hm(t), dur: sv.dur, estado, precio: sv.contado, descuento: desc,
-            comisionPct: sv.comision, exenta:false, motivo: estado==='can'?'La clienta avisó':'' }],
+          lineas: elegidos.map((x,qi)=>{
+            const l = { id:uid('ln'), servicioId:x.id, profId:as.profId, areaId:as.areaId,
+              hora: hm(reloj), dur: x.dur, estado, precio: x.contado,
+              descuento: qi===0 ? desc : 0,
+              comisionPct: x.comision, exenta:false, motivo: estado==='can'?'La clienta avisó':'' };
+            reloj += x.dur;
+            return l;
+          }),
           pagos:[], sinTurno: !area.porTurno };
 
-        /* lo que se terminó, se cobró */
+        /* lo que se terminó, se cobró: TODO junto, que es como paga la clienta */
         if(estado === 'fin'){
           const medio = elegir(MEDIO_POND);
-          const base = sv.contado - desc;
+          const base = totTot - desc;
           const imp = conRec(medio) ? lista(base) : base;
           v.pagos.push({id:uid('pa'), importe:imp, contado:base, medio, tipo:'total',
-            fecha:f, hora:hm(Math.min(finTurno, t+sv.dur+5)),
+            fecha:f, hora:hm(Math.min(finTurno, t+durTot+5)),
             usuario: USUARIOS_CAJA[D.sucursales.findIndex(x=>x.id===area.sucursalId)] || 'Vanesa Ledesma',
             anulado:null});
         }
         /* algunas de adelante dejan seña */
         if(dd > 0 && chance(.07)){
-          const sena = Math.round(sv.contado*0.3/500)*500;
+          const sena = Math.round(totTot*0.3/500)*500;
           v.pagos.push({id:uid('pa'), importe:sena, contado:sena, medio:'transfer', tipo:'sena',
             fecha: addDays(f, -2), hora:'11:00', usuario:'Vanesa Ledesma', anulado:null});
         }
         visitas.push(v);
-        t += sv.dur + (chance(.35) ? 15 : 0);
+        t += durTot + (chance(.35) ? 15 : 0);
       }
     });
   }
@@ -997,16 +1020,25 @@ function seed(){
   D.fila = [];
   let tiq = 4100;
   const CAJERA = sid => USUARIOS_CAJA[D.sucursales.findIndex(x=>x.id===sid)] || 'Vanesa Ledesma';
+  /* casi nadie viene por una cosa sola: la de depilación se hace tres zonas */
+  const variosServicios = svs => {
+    const n = chance(.38) ? 1 : chance(.6) ? 2 : 3;
+    const out = [];
+    for(let q=0;q<n;q++){ const c = elegir(svs); if(!out.includes(c.id)) out.push(c.id); }
+    return out;
+  };
   D.visitas.filter(v=>v.fecha===H && v.sinTurno).forEach(v=>{
     const l = v.lineas[0];
     const est = l.estado==='fin' ? 'fin' : l.estado==='serv' ? 'at'
               : l.estado==='no' ? 'fue' : null;
     if(!est) return;
+    const fin = v.lineas[v.lineas.length-1];
     D.fila.push({id:uid('fl'), sucursalId:v.sucursalId, fecha:H, clientaId:v.clientaId,
-      servicioId:l.servicioId, areaId:l.areaId, profPedida:null,
+      servicios: v.lineas.map(x=>x.servicioId), servicioId:l.servicioId,
+      areaId:l.areaId, profPedida:null,
       llegada: hm(Math.max(0, mh(l.hora) - 5 - Math.floor(rnd()*20))),
       estado:est, visitaId:v.id, profId:l.profId,
-      desde:l.hora, hasta: est==='fin' ? hm(mh(l.hora)+l.dur) : null,
+      desde:l.hora, hasta: est==='fin' ? hm(mh(fin.hora)+fin.dur) : null,
       tiquera:String(tiq++), usuario:CAJERA(v.sucursalId), ts:Date.now()});
   });
   /* quiénes están hoy en cada área: pedir por alguien que hoy no vino no
@@ -1025,8 +1057,9 @@ function seed(){
     if(!ar) return;
     const svs = D.servicios.filter(x=>x.areaId===ar.id && x.activo);
     const as = hoyEn(ar)[0];
+    const el1 = variosServicios(svs);
     D.fila.push({id:uid('fl'), sucursalId:su.id, fecha:H, clientaId:elegir(CLI),
-      servicioId:elegir(svs).id, areaId:ar.id, profPedida:null,
+      servicios: el1, servicioId: el1[0], areaId:ar.id, profPedida:null,
       llegada: hm(Math.max(540, ahora-25)), estado:'at', visitaId:null, profId:as.profId,
       desde: hm(Math.max(540, ahora-15)), hasta:null, tiquera:String(tiq++),
       usuario:CAJERA(su.id), ts:Date.now()});
@@ -1041,8 +1074,9 @@ function seed(){
       /* muchas clientas piden por una profesional y la esperan. Se pide
          solo por alguien que HOY esté trabajando en esa área. */
       const pedida = (chance(.35) && suyas.length) ? elegir(suyas).profId : null;
+      const els = variosServicios(svs);
       D.fila.push({id:uid('fl'), sucursalId:ar.sucursalId, fecha:H, clientaId:elegir(CLI),
-        servicioId:elegir(svs).id, areaId:ar.id, profPedida: pedida,
+        servicios: els, servicioId: els[0], areaId:ar.id, profPedida: pedida,
         llegada: hm(Math.max(540, ahora - 3 - Math.floor(rnd()*40))),
         estado:'esp', visitaId:null, profId:null, desde:null, hasta:null,
         tiquera: chance(.8) ? String(tiq++) : '',
@@ -1302,7 +1336,7 @@ function areasDeUsuario(u){
 }
 const nombreAreasDe = u => areasDeUsuario(u).map(id=>(byId(DB.areas,id)||{}).nombre).filter(Boolean).join(' + ');
 const ROLES = {duena:'Dueña', admin:'Administración', supervisora:'Supervisora',
-               recepcion:'Recepción', profesional:'Profesional'};
+               recepcion:'Recepción', profesional:'Profesional', mostrador:'Mostrador'};
 
 /* permisos por rol (con excepciones por persona en config) */
 const PERM_DEF = {
@@ -1310,7 +1344,10 @@ const PERM_DEF = {
   admin:      {agenda:'todo', clientas:'todo', equipo:'todo', caja:'todo', config:'si', reportes:'todo'},
   supervisora:{agenda:'area', clientas:'todo', equipo:'area', caja:'no',   config:'no', reportes:'area'},
   recepcion:  {agenda:'suc',  clientas:'todo', equipo:'suc',  caja:'todo', config:'no', reportes:'dia'},
-  profesional:{agenda:'prop', clientas:'prop', equipo:'prop', caja:'no',   config:'no', reportes:'no'}
+  profesional:{agenda:'prop', clientas:'prop', equipo:'prop', caja:'no',   config:'no', reportes:'no'},
+  /* el celular del mostrador: ve y trabaja todo el día, pero la plata la
+     abre recién cuando alguien pone su PIN */
+  mostrador:  {agenda:'suc',  clientas:'todo', equipo:'suc',  caja:'no',   config:'no', reportes:'no'}
 };
 /* qué opciones tiene cada módulo */
 const MODULOS = [
@@ -1839,7 +1876,7 @@ function sheet(title, body, opts={}){
         <div class="grab"></div>
         <div class="sh"><b>${esc(title)}</b>
           <button onclick="closeSheet()" style="padding:6px;color:var(--muted)">${ic('x')}</button></div>
-        <div class="sb">${body}</div>
+        <div class="sb" id="sheetbody">${body}</div>
       </div>
     </div>`;
   if(opts.focus) setTimeout(()=>{const e=document.getElementById(opts.focus); if(e)e.focus();},80);
@@ -1888,12 +1925,9 @@ function pantallaSinSucursal(){
 }
 function render(){
   _OCU = null;
-  /* El portón: con el login prendido no se ve NADA hasta entrar. */
-  if(loginHaceFalta()){
-    document.getElementById('app').innerHTML = pantallaLogin();
-    const m=document.getElementById('lg_mail'); if(m && !FB.yendo) setTimeout(()=>m.focus(),60);
-    return;
-  }
+  /* si pasaron los minutos desde que alguien puso su PIN, el celular
+     vuelve a ser del mostrador solo */
+  vigilarSesion();
   if(hayQuePresentarse()){
     document.getElementById('app').innerHTML = pantallaBienvenida();
     return;
@@ -1941,9 +1975,9 @@ function navHTML(){
   const items = [
     ['home','Inicio','home'], ['agenda','Agenda','agenda'], ['clientas','Clientas','clientas'],
     ['equipo','Equipo','equipo'], ['caja','Caja','caja']
-  ].filter(i=>vistaPermitida(i[0]));
+  ].filter(i=> i[0]==='caja' ? (vistaPermitida('caja')||hayCajeraPosible()) : vistaPermitida(i[0]));
   return `<div class="nav">${items.map(i=>`
-    <button class="${ST.view===i[0]?'on':''}" onclick="go('${i[0]}')">${ic(i[2])}<span>${i[1]}</span></button>
+    <button class="${ST.view===i[0]?'on':''}" onclick="${i[0]==='caja'?'irACaja()':`go('${i[0]}')`}">${ic(i[2])}<span>${i[1]}</span></button>
   `).join('')}</div>`;
 }
 
@@ -2033,127 +2067,12 @@ function engancharUsuario(u){
   }
 }
 
-const loginPrendido = () => !!(DB.cfg && DB.cfg.pedirClave);
-const loginHaceFalta = () => loginPrendido() && !FB.user;
-
-/* los errores de Google, dichos como los diría una persona */
-function errorEnCriollo(e){
-  const c = (e && e.code) || '';
-  if(c.includes('invalid-email'))        return 'Ese mail está mal escrito.';
-  if(c.includes('user-disabled'))        return 'Esa cuenta está deshabilitada.';
-  if(c.includes('too-many-requests'))    return 'Probaste muchas veces seguidas. Esperá unos minutos.';
-  if(c.includes('network'))              return 'No hay internet. Conectate y probá de nuevo.';
-  if(c.includes('missing-password'))     return 'Falta la contraseña.';
-  if(c.includes('weak-password'))        return 'La contraseña es muy corta: tiene que tener 6 o más.';
-  if(c.includes('user-not-found') || c.includes('wrong-password') || c.includes('invalid-credential'))
-    return 'El mail o la contraseña no coinciden.';
-  return 'No se pudo entrar. ' + ((e&&e.message)||'');
-}
-
-function pantallaLogin(){
-  const sinSdk = !FB.listo;
-  if(FB.cargando) return `<div class="login"><div class="loginbox">
-    <img class="logo" src="${LOGO}" alt="Isis" style="height:46px;margin-bottom:14px">
-    <div class="small muted">Conectando…</div></div></div>`;
-  return `<div class="login">
-    <div class="loginbox">
-      <img class="logo" src="${LOGO}" alt="Isis" style="height:46px;margin-bottom:6px">
-      <div class="small muted" style="margin-bottom:18px">Entrá con tu mail y tu contraseña</div>
-      ${FB.aviso?`<div class="warnbox" style="text-align:left">${ic('alert','sm')} ${esc(FB.aviso)}</div>`:''}
-      ${sinSdk?`<div class="warnbox" style="text-align:left">${ic('alert','sm')}
-        <b>No se pudo conectar.</b> Revisá que el celular tenga internet.
-        <button class="btn sm" style="margin-top:9px" onclick="fbIniciar()">Probar de nuevo</button></div>`:''}
-      <div class="f"><label>Mail</label>
-        <input id="lg_mail" type="email" inputmode="email" autocomplete="username"
-          placeholder="tumail@gmail.com" ${sinSdk?'disabled':''}></div>
-      <div class="f"><label>Contraseña</label>
-        <input id="lg_clave" type="password" autocomplete="current-password"
-          placeholder="••••••" ${sinSdk?'disabled':''}
-          onkeydown="if(event.key==='Enter')entrar()"></div>
-      <button class="btn" onclick="entrar()" ${sinSdk||FB.yendo?'disabled':''}>
-        ${FB.yendo?'Entrando…':ic('lock','sm')+' Entrar'}</button>
-      <button class="btn sec" style="margin-top:9px" onclick="olvideClave()" ${sinSdk?'disabled':''}>
-        Me olvidé la contraseña</button>
-      <button class="btn sec" style="margin-top:9px" onclick="ponerEnPantalla()">
-        ${ic('home','sm')} Poner ISIS en la pantalla</button>
-      <div class="tiny muted" style="margin-top:16px">Si nunca entraste, pedile a la dueña
-        o a tu supervisora que te dé de alta.</div>
-    </div></div>`;
-}
-
-async function entrar(){
-  if(!FB.listo){ toast('No hay conexión'); return; }
-  const mail = (document.getElementById('lg_mail').value||'').trim();
-  const clave = document.getElementById('lg_clave').value||'';
-  if(!mail){ toast('Falta el mail'); return; }
-  if(!clave){ toast('Falta la contraseña'); return; }
-  FB.yendo = true; FB.aviso=''; render();
-  try{
-    await FB.auth.signInWithEmailAndPassword(mail, clave);
-    /* onAuthStateChanged se encarga del resto */
-  }catch(e){
-    FB.aviso = errorEnCriollo(e);
-  }
-  FB.yendo = false; render();
-}
-
-function olvideClave(){
-  const mail = ((document.getElementById('lg_mail')||{}).value||'').trim();
-  sheet('Me olvidé la contraseña', `
-    <div class="infobox">Te mandamos un mail con un link para poner una contraseña nueva.
-      Fijate también en la carpeta de correo no deseado.</div>
-    <div class="f"><label>¿A qué mail?</label>
-      <input id="rc_mail" type="email" inputmode="email" value="${esc(mail)}" placeholder="tumail@gmail.com"></div>
-    <button class="btn" onclick="mandarResetDe(document.getElementById('rc_mail').value)">
-      ${ic('sobre','sm')} Mandame el mail</button>`, {focus:'rc_mail'});
-}
-
-async function mandarResetDe(mail){
-  mail = (mail||'').trim();
-  if(!mail){ toast('Falta el mail'); return; }
-  if(!FB.listo){ toast('No hay conexión'); return; }
-  try{
-    await FB.auth.sendPasswordResetEmail(mail);
-    closeSheet();
-    sheet('Listo, mail enviado', `
-      <div class="okbox">${ic('sobre','sm')} Si <b>${esc(mail)}</b> está registrado, en un rato
-        le llega un mail con el link para poner una contraseña nueva.</div>
-      <div class="small muted">El link vence en un rato. Si no llega, revisá el correo no deseado
-        y fijate que el mail esté bien escrito.</div>
-      <button class="btn sec" style="margin-top:12px" onclick="closeSheet()">Cerrar</button>`);
-  }catch(e){ toast(errorEnCriollo(e)); }
-}
-
-/* quién puede mandarle el mail de contraseña nueva a otra persona */
-const puedeResetearClaves = () => ['duena','admin','supervisora'].includes(usuario().rol);
-
-function resetearAOtra(){
-  const gente = DB.usuarios.filter(u=>u.activo!==false && u.email);
-  sheet('Restablecer la contraseña de alguien', `
-    <div class="infobox">Elegí a la persona. Le llega un mail con un link para que
-      ella misma ponga una contraseña nueva. Vos no ves ni elegís su contraseña.</div>
-    ${gente.length?`<div class="listcard">${gente.map(u=>`
-      <button class="lr" onclick="mandarResetDe('${esc(u.email)}')">
-        <div class="av">${ini(u.nombre)}</div>
-        <div class="g"><b>${esc(u.nombre)}</b><span>${esc(u.email)}</span></div>
-        ${ic('sobre','sm')}</button>`).join('')}</div>`
-    :`<div class="warnbox">${ic('alert','sm')} Todavía no hay nadie con el mail cargado.
-       Se carga en Configuración → Usuarios.</div>`}`);
-}
-
-async function salirDelSistema(){
-  sheet('Salir', `
-    <div class="infobox">Vas a volver a la pantalla de entrada. La próxima vez
-      hay que poner el mail y la contraseña otra vez.</div>
-    <button class="btn dan" onclick="hacerSalir()">${ic('lock','sm')} Sí, salir</button>
-    <button class="btn sec" style="margin-top:8px" onclick="closeSheet()">Cancelar</button>`);
-}
-async function hacerSalir(){
-  closeSheet();
-  try{ if(FB.auth) await FB.auth.signOut(); }catch(e){}
-  FB.user=null; FB.aviso=''; render();
-}
-
+/* Julián sacó el mail del medio: no quiere que nadie dependa de que le
+   llegue un correo para poder trabajar. Lo que quedó de Firebase es solo
+   la conexión, que la va a usar la nube para que los celulares se vean
+   entre ellos. Entrar es con el PIN, y está más abajo. */
+const loginPrendido = () => false;
+const loginHaceFalta = () => false;
 
 /* ============================================================
    COMPARTIR EL SISTEMA Y PONERLO EN LA PANTALLA DEL TELÉFONO
@@ -2319,7 +2238,7 @@ async function hacerInstalar(){
    y quién quiere ser. Un toque y está adentro.
    ============================================================ */
 const hayQuePresentarse = () =>
-  !loginPrendido() && !DB.cfg.presentado && DB.usuarios.filter(u=>u.activo!==false).length>0;
+  !DB.cfg.presentado && DB.usuarios.filter(u=>u.activo!==false).length>0;
 
 function pantallaBienvenida(){
   const gente = DB.usuarios.filter(u=>u.activo!==false);
@@ -2361,7 +2280,7 @@ function botonesCompartir(){
   </div>`;
 }
 function cambiarUsuario(){
-  if(loginPrendido()) return miCuenta();
+  if(pinPrendido()) return miCuenta();
   sheet('¿Quién está usando el sistema?', `
     <div class="infobox">Así se ve la app según quién entra. Cada rol ve cosas distintas.</div>
     <div class="listcard">
@@ -2376,17 +2295,24 @@ function cambiarUsuario(){
 }
 function miCuenta(){
   const u = usuario();
-  sheet('Mi cuenta', `
+  const viva = sesionViva();
+  const suc = byId(DB.sucursales, ST.sucursalId);
+  sheet('Este celular', `
     <div class="listcard"><div class="lr" style="pointer-events:none">
       <div class="av">${ini(u.nombre)}</div>
-      <div class="g"><b>${esc(u.nombre)}</b><span>${ROLES[u.rol]}${u.email?' · '+esc(u.email):''}</span></div>
+      <div class="g"><b>${esc(u.nombre)}</b>
+        <span>${ROLES[u.rol]}${suc?' · '+esc(suc.nombre):''}</span></div>
     </div></div>
-    <button class="btn sec" style="margin-top:12px" onclick="closeSheet();olvideClave()">
-      ${ic('lock','sm')} Cambiar mi contraseña</button>
-    ${puedeResetearClaves()?`<button class="btn sec" style="margin-top:8px" onclick="closeSheet();resetearAOtra()">
-      ${ic('sobre','sm')} Restablecer la contraseña de alguien</button>`:''}
-    <button class="btn dan" style="margin-top:8px" onclick="closeSheet();salirDelSistema()">
-      ${ic('back','sm')} Salir del sistema</button>
+    ${viva?`<div class="okbox" style="margin-top:11px;text-align:left">
+      Pusiste tu PIN hace un rato, así que podés mover plata sin que te lo vuelva a pedir.
+      <button class="btn sm sec" style="margin-top:9px" onclick="cerrarSesion();closeSheet();render()">
+        Terminé, cerrá mi sesión</button></div>`:''}
+    ${tienePin(u)?`<button class="btn sec" style="margin-top:12px" onclick="closeSheet();ponerPin('${u.id}')">
+      ${ic('lock','sm')} Cambiar mi PIN</button>`:''}
+    <button class="btn sec" style="margin-top:8px" onclick="closeSheet();esteAparato()">
+      ${ic('config','sm')} De quién es este celular</button>
+    ${puedePonerPines()?`<button class="btn sec" style="margin-top:8px" onclick="closeSheet();go('usuarios')">
+      ${ic('equipo','sm')} Los PIN del equipo</button>`:''}
     ${botonesCompartir()}`);
 }
 function setUsuario(id){
@@ -2435,11 +2361,28 @@ function esperaDe(f){
 }
 
 /* ---------- anotar a la que llega ---------- */
-let FI = {clientaId:null, servicioId:null, areaId:null, profPedida:null, q:''};
+/* Una clienta de depilación NO se hace un solo servicio: se hace media
+   pierna, axilas y cavado en la misma sentada. Lo mismo la de manicuría
+   que además se hace los pies. Por eso en la fila se anotan VARIOS
+   servicios, no uno. */
+let FI = {clientaId:null, servicios:[], areaId:null, profPedida:null, q:''};
+/* las de antes tenían un servicio solo: se siguen leyendo igual */
+const filaServicios = f => (f && f.servicios && f.servicios.length)
+  ? f.servicios : (f && f.servicioId ? [f.servicioId] : []);
+const filaDur = f => filaServicios(f).reduce((a,id)=>{
+  const s=byId(DB.servicios,id); return a+(s?s.dur:0); },0);
+const filaPrecio = f => filaServicios(f).reduce((a,id)=>{
+  const s=byId(DB.servicios,id); return a+(s?s.contado:0); },0);
+function filaNombre(f){
+  const ids = filaServicios(f);
+  if(!ids.length) return '—';
+  const n = (byId(DB.servicios, ids[0])||{}).nombre || '—';
+  return ids.length===1 ? n : n+' y '+(ids.length-1)+' más';
+}
 
 function llegoAlguien(){
   if(!puedeEditarAgenda()){ toast('No podés anotar en la fila'); return; }
-  FI = {clientaId:null, servicioId:null, areaId:null, profPedida:null, q:''};
+  FI = {clientaId:null, servicios:[], areaId:null, profPedida:null, q:''};
   pasoClienteFila();
 }
 
@@ -2505,6 +2448,12 @@ function pasoServicioFila(){
   const ar = FI.areaId && areas.find(a=>a.id===FI.areaId) ? FI.areaId : (areas[0]||{}).id;
   FI.areaId = ar;
   const svs = DB.servicios.filter(x=>x.areaId===ar && x.activo);
+  /* si cambia de área se limpian los elegidos: no se mezclan áreas en
+     una misma pasada, porque la atiende una sola profesional */
+  const puestos = FI.servicios.filter(id=>svs.some(x=>x.id===id));
+  FI.servicios = puestos;
+  const dur = puestos.reduce((a,id)=>a+(byId(DB.servicios,id)||{dur:0}).dur,0);
+  const tot = puestos.reduce((a,id)=>a+(byId(DB.servicios,id)||{contado:0}).contado,0);
   sheet('¿Qué se va a hacer?', `
     <div class="card cardp" style="margin-bottom:11px;display:flex;align-items:center;gap:11px">
       <div class="av">${ini(cl.nombre)}</div>
@@ -2516,20 +2465,45 @@ function pasoServicioFila(){
     <div class="subtabs" style="padding:0 0 11px">${areas.map(a=>`
       <button class="ptab ${a.id===ar?'on':''}" onclick="FI.areaId='${a.id}';pasoServicioFila()">
         ${a.icono} ${esc(a.nombre)}</button>`).join('')}</div>
-    <div class="listcard">${svs.length?svs.map(x=>`
-      <button class="lr" onclick="FI.servicioId='${x.id}';pasoConfirmarFila()">
+    <div class="small muted" style="margin:-3px 0 9px">Tocá TODO lo que se va a hacer.
+      Se puede marcar más de uno.</div>
+    <div class="listcard">${svs.length?svs.map(x=>{
+      const on = FI.servicios.includes(x.id);
+      return `<button class="lr" onclick="tildarServicioFila('${x.id}')"
+        ${on?'style="background:var(--freebg)"':''}>
+        <div class="av" style="${on?'background:var(--pri);color:#fff':''}">${on?'✓':'+'}</div>
         <div class="g"><b>${esc(x.nombre)}</b><span>${x.dur} min${puedeVerPrecios()?' · '+money(x.contado):''}</span></div>
-        ${ic('chev','sm')}</button>`).join('')
-      :`<div class="empty">Esta área no tiene servicios cargados.</div>`}</div>`);
+      </button>`;}).join('')
+      :`<div class="empty">Esta área no tiene servicios cargados.</div>`}</div>
+    ${puestos.length?`<div class="okbox" style="margin-top:12px;text-align:left">
+      <b>${puestos.length} servicio${puestos.length===1?'':'s'}</b> · ${dur} min${
+        puedeVerPrecios()?' · '+money(tot):''}</div>
+      <button class="btn" style="margin-top:10px" onclick="pasoConfirmarFila()">Seguir</button>`
+     :`<div class="small muted" style="margin-top:12px;text-align:center">Marcá al menos uno.</div>`}`);
+}
+function tildarServicioFila(id){
+  const i = FI.servicios.indexOf(id);
+  if(i>=0) FI.servicios.splice(i,1); else FI.servicios.push(id);
+  pasoServicioFila();
 }
 
 function pasoConfirmarFila(){
-  const cl=byId(DB.clientas,FI.clientaId), sv=byId(DB.servicios,FI.servicioId);
-  const profes = profesDelDia(FI.areaId, hoy()).filter(p=>profesDe(FI.areaId,FI.servicioId).some(x=>x.id===p.id));
+  if(!FI.servicios.length) return pasoServicioFila();
+  const cl=byId(DB.clientas,FI.clientaId);
+  /* la que la atienda tiene que saber hacer TODO lo que pidió */
+  const profes = profesDelDia(FI.areaId, hoy())
+    .filter(p=>FI.servicios.every(sid=>profesDe(FI.areaId,sid).some(x=>x.id===p.id)));
+  const dur = FI.servicios.reduce((a,id)=>a+(byId(DB.servicios,id)||{dur:0}).dur,0);
+  const tot = FI.servicios.reduce((a,id)=>a+(byId(DB.servicios,id)||{contado:0}).contado,0);
   sheet('Anotar en la fila', `
     <div class="card cardp" style="margin-bottom:13px">
       <div style="font-weight:700;font-size:16px">${esc(cl.nombre)}</div>
-      <div class="small muted">${esc(sv.nombre)} · ${sv.dur} min</div>
+      ${FI.servicios.map(id=>{const s=byId(DB.servicios,id)||{};
+        return `<div class="kv"><span class="muted">${esc(s.nombre||'')}</span>
+          <b>${s.dur||0} min${puedeVerPrecios()?' · '+money(s.contado||0):''}</b></div>`;}).join('')}
+      <div class="tot"><span>${FI.servicios.length} servicio${FI.servicios.length===1?'':'s'} · ${dur} min</span>
+        <span>${puedeVerPrecios()?money(tot):''}</span></div>
+      <button class="btn sm sec" style="margin-top:9px" onclick="pasoServicioFila()">Cambiar</button>
     </div>
     <div class="f"><label>¿Pide por alguien en particular?</label>
       <div class="small muted" style="margin:-3px 0 8px">Si pide por una, la espera a ella
@@ -2545,8 +2519,10 @@ function pasoConfirmarFila(){
 
 function guardarEnFila(){
   if(!puedeEditarAgenda()){ toast('No podés anotar en la fila'); return; }
+  if(!FI.servicios.length){ toast('Marcá qué se va a hacer'); return; }
   const f = {id:uid('fi'), sucursalId:ST.sucursalId, fecha:hoy(), clientaId:FI.clientaId,
-    servicioId:FI.servicioId, areaId:FI.areaId, profPedida:FI.profPedida,
+    servicios:[...FI.servicios], servicioId:FI.servicios[0],
+    areaId:FI.areaId, profPedida:FI.profPedida,
     llegada:horaAhora(), estado:'esp', visitaId:null, tiquera:'',
     usuario:usuario().nombre, ts:new Date().toISOString()};
   DB.fila.push(f);
@@ -2559,8 +2535,9 @@ function guardarEnFila(){
 function pasaAtenderse(fid){
   if(!puedeEditarAgenda()){ toast('No podés tocar la fila'); return; }
   const f=byId(DB.fila,fid); if(!f) return;
-  const cl=byId(DB.clientas,f.clientaId), sv=byId(DB.servicios,f.servicioId);
-  const hacen = profesDelDia(f.areaId, hoy()).filter(p=>profesDe(f.areaId,f.servicioId).some(x=>x.id===p.id));
+  const cl=byId(DB.clientas,f.clientaId);
+  const hacen = profesDelDia(f.areaId, hoy())
+    .filter(p=>filaServicios(f).every(sid=>profesDe(f.areaId,sid).some(x=>x.id===p.id)));
   const pedida = f.profPedida ? byId(DB.profesionales,f.profPedida) : null;
   const ocupada = pid => atendiendose().some(x=>x.profId===pid);
   const lista = pedida ? hacen.filter(p=>p.id===pedida.id) : hacen;
@@ -2568,7 +2545,9 @@ function pasaAtenderse(fid){
   sheet('¿Con quién pasa?', `
     <div class="card cardp" style="margin-bottom:12px">
       <div style="font-weight:700;font-size:16px">${esc(cl.nombre)}</div>
-      <div class="small muted">${esc(sv.nombre)} · esperando ${esperaDe(f).txt}</div>
+      <div class="small muted">${esc(filaNombre(f))} · ${filaDur(f)} min · esperando ${esperaDe(f).txt}</div>
+      ${filaServicios(f).length>1?`<div class="tiny muted" style="margin-top:4px">${
+        filaServicios(f).map(id=>esc((byId(DB.servicios,id)||{}).nombre||'')).join(' · ')}</div>`:''}
     </div>
     ${pedida?`<div class="infobox">Pidió por <b>${esc(pedida.nombre)}</b>.</div>`:''}
     <div class="listcard">${lista.length?lista.map(p=>`
@@ -2590,16 +2569,24 @@ function pasaAtenderse(fid){
 function hacerPasar(fid, pid){
   if(!puedeEditarAgenda()){ toast('No podés tocar la fila'); return; }
   const f=byId(DB.fila,fid); if(!f) return;
-  const sv=byId(DB.servicios,f.servicioId);
   const as=DB.asign.find(a=>a.profId===pid && a.areaId===f.areaId);
-  const pq=paqueteActivo(f.clientaId, f.servicioId);
-  const linea = {id:uid('ln'), servicioId:f.servicioId, profId:pid, areaId:f.areaId,
-    hora:horaAhora(), dur:sv.dur, estado:'serv', precio:sv.contado, descuento:0,
-    comisionPct:(as&&as.comision!=null)?as.comision:sv.comision, exenta:false, motivo:'',
-    paqueteId: pq?pq.id:null, voucherId:null, consumida:false, liqId:null, forzado:'',
-    sinTurno:true};
+  /* un renglón por cada cosa que se hace: la de depilación se hace media
+     pierna, axilas y cavado, y cada una tiene su precio y su comisión */
+  let reloj = mh(horaAhora());
+  const lineas = filaServicios(f).map(sid=>{
+    const sv = byId(DB.servicios, sid); if(!sv) return null;
+    const pq = paqueteActivo(f.clientaId, sid);
+    const l = {id:uid('ln'), servicioId:sid, profId:pid, areaId:f.areaId,
+      hora:hm(reloj), dur:sv.dur, estado:'serv', precio:sv.contado, descuento:0,
+      comisionPct:(as&&as.comision!=null)?as.comision:sv.comision, exenta:false, motivo:'',
+      paqueteId: pq?pq.id:null, voucherId:null, consumida:false, liqId:null, forzado:'',
+      sinTurno:true};
+    reloj += sv.dur;
+    return l;
+  }).filter(Boolean);
+  if(!lineas.length){ toast('Esa clienta no tiene servicios anotados'); return; }
   const v = {id:uid('vi'), clientaId:f.clientaId, sucursalId:f.sucursalId, fecha:hoy(),
-    creada:new Date().toISOString(), lineas:[linea], pagos:[], sinTurno:true};
+    creada:new Date().toISOString(), lineas, pagos:[], sinTurno:true};
   DB.visitas.push(v);
   f.estado='at'; f.visitaId=v.id; f.profId=pid; f.desde=horaAhora();
   logAcc(`Pasó a atenderse: ${byId(DB.clientas,f.clientaId).nombre} con ${byId(DB.profesionales,pid).nombre}`);
@@ -2671,7 +2658,7 @@ const profOcupada = pid => ocupadasAhora().has(pid);
 /* quiénes podrían atender a esta clienta hoy */
 function profesPosibles(f){
   return profesDelDia(f.areaId, hoy())
-    .filter(p=>profesDe(f.areaId, f.servicioId).some(x=>x.id===p.id));
+    .filter(p=>filaServicios(f).every(sid=>profesDe(f.areaId, sid).some(x=>x.id===p.id)));
 }
 /* ¿puede pasar ahora? Y si no, por qué */
 function puedePasar(f){
@@ -2729,7 +2716,9 @@ function vFila(){
 
   const siguen = lasQueSiguen();
   const reng = (f, modo) => {
-    const c=byId(DB.clientas,f.clientaId), sv=byId(DB.servicios,f.servicioId);
+    const c=byId(DB.clientas,f.clientaId);
+    const sv={nombre: filaNombre(f)};
+    const cuantos = filaServicios(f).length;
     const a=byId(DB.areas,f.areaId), e=esperaDe(f);
     const ped = f.profPedida?byId(DB.profesionales,f.profPedida):null;
     const pr  = f.profId?byId(DB.profesionales,f.profId):null;
@@ -2739,7 +2728,9 @@ function vFila(){
       <div class="fic">${a?a.icono:'•'}</div>
       <div class="g">
         <b>${esc(c?c.nombre:'—')}${sigue?' <span class="chipsigue">SIGUE</span>':''}</b>
-        <span>${esc(sv?sv.nombre:'')}${pr?' · '+esc(pr.nombre.split(' ')[0]):''}</span>
+        <span>${esc(sv.nombre)}${cuantos>1?' · '+filaDur(f)+' min':''}${pr?' · '+esc(pr.nombre.split(' ')[0]):''}</span>
+        ${cuantos>1?`<span class="tiny muted">${filaServicios(f)
+          .map(id=>esc((byId(DB.servicios,id)||{}).nombre||'')).join(' · ')}</span>`:''}
         ${(ped&&modo==='esp'&&pp.ok)?`<span class="pide">${ic('user','sm')} Pide por ${esc(ped.nombre.split(' ')[0])}</span>`:''}
         ${(modo==='esp'&&!pp.ok)?`<span class="trab">${esc(pp.razon)}</span>`:''}
         ${f.tiquera?`<span class="tiny muted">Tiquera ${esc(f.tiquera)}</span>`:''}
@@ -2785,12 +2776,12 @@ function vFila(){
 
     ${cerradas.length?`<div class="h3">Ya pasaron hoy · ${cerradas.length}</div>
     <div class="listcard">${cerradas.slice(-12).reverse().map(f=>{
-      const c=byId(DB.clientas,f.clientaId), sv=byId(DB.servicios,f.servicioId);
+      const c=byId(DB.clientas,f.clientaId);
       const a=byId(DB.areas,f.areaId);
       return `<div class="lr" style="opacity:.75">
         <div class="av">${a?a.icono:'•'}</div>
         <div class="g"><b>${esc(c?c.nombre:'—')}</b>
-          <span>${esc(sv?sv.nombre:'')} · ${f.estado==='fue'?'se fue sin atenderse':'terminó '+esc(f.hasta||'')}</span></div>
+          <span>${esc(filaNombre(f))} · ${f.estado==='fue'?'se fue sin atenderse':'terminó '+esc(f.hasta||'')}</span></div>
         ${(f.estado==='fin'&&puedeEditarAgenda())?`<button class="btn sm sec" onclick="ponerTiquera('${f.id}')">Tiquera</button>`:''}
       </div>`;}).join('')}</div>`:''}
 
@@ -2846,11 +2837,11 @@ function vHome(){
       ${puedeVerAgenda()?`<button class="tile" onclick="go('agenda')">${ic('agenda','lg')}<b>${perm('agenda')==='prop'?'Mis turnos':'Agenda'}</b><span>${perm('agenda')==='prop'?'Los tuyos de hoy':'Turnos de '+esc(suc.nombre)}</span></button>`:''}
       ${puedeVerClientas()?`<button class="tile t-cli" onclick="go('clientas')">${ic('clientas','lg')}<b>Clientas</b><span>${clientasVisibles().length} ${perm('clientas')==='prop'?'tuyas':'en total'}</span></button>`:''}
       ${puedeVerEquipo()?`<button class="tile t-eq" onclick="go('equipo')">${ic('equipo','lg')}<b>${perm('equipo')==='prop'?'Mi horario':'Equipo'}</b><span>${perm('equipo')==='prop'?'Horario y fichaje':'Horarios y fichadas'}</span></button>`:''}
-      ${puedeCobrar()?`<button class="tile t-caja" onclick="go('caja')">${ic('caja','lg')}<b>Caja</b><span>Cobros y gastos</span></button>`:''}
+      ${(puedeCobrar()||hayCajeraPosible())?`<button class="tile t-caja" onclick="irACaja()">${ic('caja','lg')}<b>Caja</b><span>Cobros y gastos</span></button>`:''}
       ${puedeEditarAgenda()?`<button class="tile t-esp" onclick="go('espera')">${ic('list','lg')}<b>Lista de espera</b><span>${DB.espera.length} esperando</span></button>`:''}
       ${puedeCobrar()?`<button class="tile t-vou" onclick="go('vouchers')">${ic('gift','lg')}<b>Vouchers</b><span>${DB.vouchers.filter(v=>!v.canjeado).length} sin canjear</span></button>`:''}
       ${puedeVerComisiones()?`<button class="tile t-com" onclick="go('comisiones')">${ic('sobre','lg')}<b>Comisiones</b><span>Lo que se le paga a cada una</span></button>`:''}
-      ${puedeVerReportes()?`<button class="tile t-rep" onclick="go('reportes')">${ic('chart','lg')}<b>Reportes</b><span>Facturación y comisiones</span></button>`:''}
+      ${(puedeVerReportes()||hayQuienVeaReportes())?`<button class="tile t-rep" onclick="irAReportes()">${ic('chart','lg')}<b>Reportes</b><span>Facturación y comisiones</span></button>`:''}
       <button class="tile t-pre" onclick="go('precios')">${ic('cash','lg')}<b>Precios</b><span>Lista de servicios</span></button>
       ${puedeConfig()?`<button class="tile t-cfg" onclick="go('config')">${ic('config','lg')}<b>Configuración</b><span>Áreas, servicios, precios</span></button>`:''}
     </div>
@@ -4386,6 +4377,12 @@ function marcarLlegada(vid){
    ============================================================ */
 const CO = {vid:null, medio:'efectivo', pagos:[]};
 function cobrar(vid){
+  /* la puerta de la plata: si el celular es del mostrador, primero
+     decime quién sos, y ese nombre es el que queda en el libro */
+  if(pinPrendido() && !puedeCobrar() && !sesionViva())
+    return conPin('Para cobrar', ()=>cobrar(vid),
+      u=>puedeCajaEse(u) && (!u.sucursalId || u.sucursalId===ST.sucursalId));
+  if(!puedeCobrar()){ toast('No tenés acceso a la caja'); return; }
   if(!puedeCobrar()){ toast('No tenés acceso a la caja'); return; }
   CO.vid=vid; CO.medio='efectivo';
   pintarCobro();
@@ -7350,6 +7347,311 @@ function informePeriodo(k){
   hojaInforme(R.desde, R.hasta, ST.sucursalId, 'Informe · '+R.n);
 }
 
+
+/* ============================================================
+   ENTRAR CON UN PIN DE 4 NÚMEROS
+   Nada de mails ni contraseñas. El celular se acuerda del local
+   y cualquiera puede ver la agenda, la fila y los precios sin que
+   le pida nada. El PIN aparece SOLO cuando se toca plata: cobrar,
+   cargar un gasto, abrir o cerrar la caja, anular, o mirar los
+   reportes. Así la recepcionista no pierde tiempo todo el día y
+   cada peso igual queda con el nombre de quien lo movió.
+   Si alguien se lo olvida, la dueña o la supervisora le ponen uno
+   nuevo desde Equipo. No hay que esperar ningún mail.
+   ============================================================ */
+
+/* ---------- el aparato ---------- */
+/* Esto NO viaja a la nube: es de este celular y de ninguno más.
+   Por eso vive en su propio cajón y no adentro de la base. */
+let APA = {modo:'mostrador', usuarioId:null, sucursalId:null};
+function apaCargar(){
+  try{ const t = localStorage.getItem('isis_aparato');
+    if(t) APA = Object.assign(APA, JSON.parse(t)); }catch(e){}
+}
+function apaGuardar(){
+  try{ localStorage.setItem('isis_aparato', JSON.stringify(APA)); }catch(e){}
+}
+
+/* ---------- el PIN guardado ---------- */
+/* No se guarda el PIN: se guarda un revoltijo del que no se puede
+   volver para atrás, con una pizca distinta para cada persona. */
+async function pinRevolver(pin, sal){
+  const txt = 'isis|'+sal+'|'+pin;
+  try{
+    if(crypto && crypto.subtle){
+      const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(txt));
+      return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
+    }
+  }catch(e){}
+  /* si el aparato es viejo y no sabe, uno más simple */
+  let h1=0x811c9dc5, h2=0x1000193;
+  for(let i=0;i<txt.length;i++){
+    h1 = (h1 ^ txt.charCodeAt(i)) >>> 0; h1 = (h1 * 0x01000193) >>> 0;
+    h2 = (h2 + txt.charCodeAt(i)*(i+7)) >>> 0; h2 = (h2 ^ (h2>>>13)) >>> 0;
+  }
+  return 'x'+h1.toString(16)+h2.toString(16);
+}
+const pinPrendido = () => !!(DB.cfg && DB.cfg.pedirPin);
+const tienePin = u => !!(u && u.pin);
+
+async function ponerPinA(usId, pin){
+  const u = byId(DB.usuarios, usId); if(!u) return false;
+  const sal = uid('sl');
+  u.pin = await pinRevolver(pin, sal);
+  u.pinSal = sal; u.pinFallos = 0; u.pinTrabaHasta = 0;
+  save(); return true;
+}
+/* ¿de quién es este PIN? Los PINes no se repiten, así que con
+   escribirlo alcanza: no hace falta buscarse en una lista primero. */
+async function deQuienEs(pin, filtro){
+  for(const u of DB.usuarios){
+    if(u.activo===false || !u.pin) continue;
+    if(filtro && !filtro(u)) continue;
+    if(await pinRevolver(pin, u.pinSal) === u.pin) return u;
+  }
+  return null;
+}
+async function pinRepetido(pin, exceptoId){
+  const u = await deQuienEs(pin, x=>x.id!==exceptoId);
+  return u || null;
+}
+
+/* ---------- la sesión de plata ---------- */
+let PIN_SES = {usuarioId:null, hasta:0};
+const MINUTOS_SESION = 15;
+const sesionViva = () => PIN_SES.hasta > Date.now() && !!byId(DB.usuarios, PIN_SES.usuarioId);
+function abrirSesion(u){
+  PIN_SES = {usuarioId:u.id, hasta: Date.now() + MINUTOS_SESION*60000};
+  ST.usuarioId = u.id;
+}
+function cerrarSesion(){
+  PIN_SES = {usuarioId:null, hasta:0};
+  if(APA.usuarioId && byId(DB.usuarios, APA.usuarioId)) ST.usuarioId = APA.usuarioId;
+}
+/* se llama en cada dibujado: si se venció, vuelve a ser el mostrador */
+function vigilarSesion(){
+  if(!pinPrendido()) return;
+  if(PIN_SES.usuarioId && !sesionViva()){
+    cerrarSesion();
+    if(['caja','reportes','liquidaciones'].includes(ST.view)) ST.view = 'home';
+  }
+}
+
+/* quiénes podrían cobrar en este local */
+const puedeCajaEse = u => {
+  const P = (u.permisos && u.permisos.caja) || ((DB.cfg.permisos&&DB.cfg.permisos[u.rol])||PERM_DEF[u.rol]||{}).caja;
+  return P==='todo';
+};
+const puedeReportesEse = u => {
+  const P = (u.permisos && u.permisos.reportes) || ((DB.cfg.permisos&&DB.cfg.permisos[u.rol])||PERM_DEF[u.rol]||{}).reportes;
+  return P && P!=='no';
+};
+function hayQuienVeaReportes(){
+  if(!pinPrendido()) return false;
+  return DB.usuarios.some(u=>u.activo!==false && tienePin(u) && puedeReportesEse(u));
+}
+function hayCajeraPosible(){
+  if(!pinPrendido()) return false;
+  return DB.usuarios.some(u=>u.activo!==false && tienePin(u) && puedeCajaEse(u)
+    && (!u.sucursalId || u.sucursalId===ST.sucursalId));
+}
+
+/* ---------- el teclado ---------- */
+let TEC = {pin:'', motivo:'', cb:null, error:'', quien:null, yendo:false};
+
+/* la puerta: corre lo que le pases, pidiendo el PIN si hace falta */
+function conPin(motivo, fn, filtro){
+  if(!pinPrendido()){ fn(usuario()); return; }
+  if(sesionViva()){ ST.usuarioId = PIN_SES.usuarioId; fn(usuario()); return; }
+  TEC = {pin:'', motivo:motivo||'', cb:fn, error:'', quien:null, yendo:false,
+         filtro: filtro || (u=>true)};
+  sheet('Poné tu PIN', tecladoHTML(), {sinCerrarAfuera:true});
+}
+function tecladoHTML(){
+  const p = TEC.pin;
+  const teclas = ['1','2','3','4','5','6','7','8','9','','0','b'];
+  return `
+    <div class="tecmot">${esc(TEC.motivo||'Para seguir, decinos quién sos')}</div>
+    <div class="tecpuntos">
+      ${[0,1,2,3].map(i=>`<i class="${p.length>i?'on':''}"></i>`).join('')}
+    </div>
+    <div class="tecmsg ${TEC.error?'mal':''}">${TEC.error
+      ? esc(TEC.error)
+      : (TEC.quien ? 'Hola, '+esc(TEC.quien.nombre.split(' ')[0]) : '&nbsp;')}</div>
+    <div class="teclado">
+      ${teclas.map(t=> t===''
+        ? `<span></span>`
+        : t==='b'
+          ? `<button class="tec bo" onclick="tecBorrar()" aria-label="Borrar">${ic('back','sm')}</button>`
+          : `<button class="tec" onclick="tecTocar('${t}')">${t}</button>`).join('')}
+    </div>
+    <button class="btn sec" style="margin-top:14px" onclick="closeSheet()">Cancelar</button>
+    <div class="tiny muted" style="margin-top:11px;text-align:center">
+      ¿Te olvidaste el PIN? Pedile a la dueña o a la supervisora que te ponga uno nuevo.</div>`;
+}
+function tecPintar(){
+  const box = document.getElementById('sheetbody');
+  if(box) box.innerHTML = tecladoHTML();
+}
+function tecBorrar(){ TEC.pin = TEC.pin.slice(0,-1); TEC.error=''; TEC.quien=null; tecPintar(); }
+async function tecTocar(n){
+  if(TEC.yendo || TEC.pin.length>=4) return;
+  TEC.pin += n; TEC.error=''; tecPintar();
+  if(TEC.pin.length < 4) return;
+  TEC.yendo = true; tecPintar();
+  const u = await deQuienEs(TEC.pin, TEC.filtro);
+  TEC.yendo = false;
+  if(!u){
+    /* se anota el intento fallido en la persona que estaba trabada, no acá:
+       no sabemos de quién era el PIN equivocado */
+    TEC.pin=''; TEC.error='Ese PIN no es de nadie. Probá de nuevo.'; tecPintar();
+    return;
+  }
+  if(u.pinTrabaHasta && u.pinTrabaHasta > Date.now()){
+    const min = Math.ceil((u.pinTrabaHasta-Date.now())/60000);
+    TEC.pin=''; TEC.error='Esperá '+min+' minuto'+(min===1?'':'s')+' y probá de nuevo.'; tecPintar();
+    return;
+  }
+  u.pinFallos = 0; save();
+  TEC.quien = u; tecPintar();
+  const fn = TEC.cb; TEC.cb = null;
+  abrirSesion(u);
+  logAcc('Entró con su PIN');
+  setTimeout(()=>{ closeSheet(); if(fn) fn(u); else render(); }, 260);
+}
+
+/* ---------- las puertas de la plata ---------- */
+function irACaja(){
+  conPin('Para ver y mover la caja', ()=>{ ST.view='caja'; ST.cajaFecha=null; closeSheet(); render(); },
+    u=>puedeCajaEse(u) && (!u.sucursalId || u.sucursalId===ST.sucursalId));
+}
+function irAReportes(){
+  conPin('Para ver los números del negocio', ()=>{ ST.view='reportes'; closeSheet(); render(); },
+    u=>puedeReportesEse(u));
+}
+
+/* ---------- poner y cambiar el PIN ---------- */
+const puedePonerPines = () => ['duena','admin','supervisora'].includes(usuario().rol);
+let NP = {usId:null, pin:'', paso:1, primero:'', error:''};
+
+function ponerPin(usId){
+  const u = byId(DB.usuarios, usId); if(!u) return;
+  const yo = usuario();
+  if(u.id!==yo.id && !puedePonerPines()){ toast('Solo la dueña o la supervisora pueden'); return; }
+  NP = {usId, pin:'', paso:1, primero:'', error:''};
+  sheet((tienePin(u)?'Cambiar el PIN de ':'Ponerle un PIN a ')+u.nombre.split(' ')[0], npHTML());
+}
+function npHTML(){
+  const p = NP.pin;
+  const teclas = ['1','2','3','4','5','6','7','8','9','','0','b'];
+  return `
+    <div class="tecmot">${NP.paso===1?'Elegí cuatro números':'Ponelos otra vez para confirmar'}</div>
+    <div class="tecpuntos">${[0,1,2,3].map(i=>`<i class="${p.length>i?'on':''}"></i>`).join('')}</div>
+    <div class="tecmsg ${NP.error?'mal':''}">${NP.error?esc(NP.error):'&nbsp;'}</div>
+    <div class="teclado">
+      ${teclas.map(t=> t===''?`<span></span>`
+        : t==='b'?`<button class="tec bo" onclick="npBorrar()" aria-label="Borrar">${ic('back','sm')}</button>`
+        : `<button class="tec" onclick="npTocar('${t}')">${t}</button>`).join('')}
+    </div>
+    <div class="tiny muted" style="margin-top:12px;text-align:center">
+      No uses 1234 ni el año de tu cumpleaños. Nadie más puede tener el mismo PIN.</div>`;
+}
+function npPintar(){ const b=document.getElementById('sheetbody'); if(b) b.innerHTML = npHTML(); }
+function npBorrar(){ NP.pin = NP.pin.slice(0,-1); NP.error=''; npPintar(); }
+async function npTocar(n){
+  if(NP.pin.length>=4) return;
+  NP.pin += n; NP.error=''; npPintar();
+  if(NP.pin.length<4) return;
+  if(NP.paso===1){
+    if(/^(\d)\1{3}$/.test(NP.pin) || ['1234','4321','0123'].includes(NP.pin)){
+      NP.pin=''; NP.error='Ese es muy fácil de adivinar. Elegí otro.'; npPintar(); return;
+    }
+    const otra = await pinRepetido(NP.pin, NP.usId);
+    if(otra){ NP.pin=''; NP.error='Ese PIN ya lo usa otra persona. Elegí otro.'; npPintar(); return; }
+    NP.primero = NP.pin; NP.pin=''; NP.paso=2; npPintar(); return;
+  }
+  if(NP.pin !== NP.primero){
+    NP.pin=''; NP.paso=1; NP.primero=''; NP.error='No coincidieron. Empezá de nuevo.'; npPintar(); return;
+  }
+  const u = byId(DB.usuarios, NP.usId);
+  await ponerPinA(NP.usId, NP.pin);
+  logAcc('PIN puesto a '+u.nombre);
+  closeSheet(); render();
+  toast('Listo, '+u.nombre.split(' ')[0]+' ya puede entrar con su PIN');
+}
+function sacarPin(usId){
+  if(!puedePonerPines()){ toast('Solo la dueña o la supervisora pueden'); return; }
+  const u = byId(DB.usuarios, usId); if(!u) return;
+  u.pin=null; u.pinSal=null; u.pinFallos=0; u.pinTrabaHasta=0;
+  if(PIN_SES.usuarioId===usId) cerrarSesion();
+  logAcc('PIN sacado a '+u.nombre);
+  save(); closeSheet(); render(); toast('Le sacamos el PIN');
+}
+
+/* ---------- configurar este aparato ---------- */
+function esteAparato(){
+  const sucs = DB.sucursales.filter(s=>s.activa);
+  const gente = DB.usuarios.filter(u=>u.activo!==false);
+  sheet('Este celular', `
+    <div class="infobox" style="text-align:left">Esto es de este aparato nada más. Sirve para que
+      no tenga que decir quién es cada vez que lo abre.</div>
+
+    <div class="h3">¿De quién es?</div>
+    <div class="listcard">
+      <button class="lr" onclick="aparatoMostrador()">
+        <div class="av">${ic('home','sm')}</div>
+        <div class="g"><b>Es del mostrador</b>
+          <span>Lo usan todas. Pide el PIN cuando se toca plata</span></div>
+        ${APA.modo==='mostrador'?'<span class="bd ac">Así está</span>':''}
+      </button>
+      ${gente.map(u=>`<button class="lr" onclick="aparatoDe('${u.id}')">
+        <div class="av">${ini(u.nombre)}</div>
+        <div class="g"><b>Es de ${esc(u.nombre.split(' ')[0])}</b>
+          <span>${ROLES[u.rol]}</span></div>
+        ${(APA.modo==='persona'&&APA.usuarioId===u.id)?'<span class="bd ac">Así está</span>':''}
+      </button>`).join('')}
+    </div>
+
+    ${APA.modo==='mostrador'?`
+      <div class="h3">¿En qué local está este celular?</div>
+      <div class="listcard">
+        ${sucs.map(s=>`<button class="lr" onclick="aparatoLocal('${s.id}')">
+          <div class="g"><b>${esc(s.nombre)}</b><span>${esc(s.dir||'')}</span></div>
+          ${APA.sucursalId===s.id?'<span class="bd ac">Acá</span>':''}
+        </button>`).join('')}
+      </div>`:''}
+    ${botonesCompartir()}`);
+}
+function aparatoMostrador(){
+  APA.modo='mostrador'; APA.usuarioId = usuarioMostrador().id;
+  APA.sucursalId = APA.sucursalId || ST.sucursalId;
+  apaGuardar(); cerrarSesion(); ST.usuarioId = APA.usuarioId;
+  ST.sucursalId = APA.sucursalId; ST.view='home'; closeSheet(); render();
+}
+function aparatoDe(usId){
+  APA.modo='persona'; APA.usuarioId = usId;
+  apaGuardar(); cerrarSesion();
+  const u = byId(DB.usuarios, usId);
+  ST.usuarioId = usId;
+  if(u && u.sucursalId) ST.sucursalId = u.sucursalId;
+  ST.view='home'; closeSheet(); render();
+}
+function aparatoLocal(sid){
+  APA.sucursalId = sid; apaGuardar();
+  ST.sucursalId = sid; closeSheet(); render();
+}
+/* el usuario "Mostrador": ve el día entero pero no la plata */
+function usuarioMostrador(){
+  let m = DB.usuarios.find(u=>u.rol==='mostrador');
+  if(!m){
+    m = {id:uid('us'), nombre:'Mostrador', rol:'mostrador', profId:null,
+      sucursalId:null, areaId:null, activo:true,
+      permisos:{agenda:'suc', clientas:'todo', equipo:'suc', caja:'no', config:'no', reportes:'no'}};
+    DB.usuarios.push(m); save();
+  }
+  return m;
+}
+
 function vReportes(){
   const nivel = perm('reportes');
   /* recepción ve el movimiento del día y nada más: eso no cambia */
@@ -8092,64 +8394,83 @@ function restaurarPermisos(){
 
 /* ---------- usuarios ---------- */
 function vUsuarios(){
-  const conMail = DB.usuarios.filter(u=>u.activo!==false && u.email).length;
-  const total   = DB.usuarios.filter(u=>u.activo!==false).length;
+  const gentePlata = DB.usuarios.filter(u=>u.activo!==false && u.rol!=='mostrador'
+    && (puedeCajaEse(u)||puedeReportesEse(u)));
+  const conCaja = gentePlata.length;
+  const conPin  = gentePlata.filter(u=>tienePin(u)).length;
   return `<div class="pad">
     <div class="card cardp" style="margin-bottom:13px">
-      <div class="chk"><input type="checkbox" id="cf_clave" ${DB.cfg.pedirClave?'checked':''}
-        onchange="cambiarPedirClave(this.checked)">
-        <div class="g"><b>Pedir contraseña para entrar</b>
-          <span class="small muted">${DB.cfg.pedirClave
-            ? 'Prendido: cada una entra con su mail y su contraseña.'
-            : 'Apagado: se cambia de usuario eligiendo de una lista, sin contraseña.'}</span></div></div>
-      <div class="tiny ${conMail<total?'':'muted'}" style="margin-top:2px;${conMail<total?'color:var(--warn)':''}">
-        ${conMail} de ${total} ${total===1?'persona tiene':'personas tienen'} el mail cargado.</div>
+      <div class="chk"><input type="checkbox" id="cf_pin" ${DB.cfg.pedirPin?'checked':''}
+        onchange="cambiarPedirPin(this.checked)">
+        <div class="g"><b>Pedir el PIN para tocar la plata</b>
+          <span class="small muted">${DB.cfg.pedirPin
+            ? 'Prendido: la agenda y la fila se usan sin pedir nada, pero para cobrar, cargar un gasto, cerrar la caja o ver los reportes hay que poner el PIN de cuatro números.'
+            : 'Apagado: se cambia de persona eligiendo de una lista, sin PIN. Sirve para probar.'}</span></div></div>
+      <div class="tiny ${conPin<conCaja?'':'muted'}" style="margin-top:2px;${conPin<conCaja?'color:var(--warn)':''}">
+        ${conPin} de ${conCaja} ${conCaja===1?'persona que toca plata tiene':'personas que tocan plata tienen'} su PIN puesto.</div>
     </div>
     <button class="btn" style="margin-bottom:13px" onclick="editarUsuario()">${ic('plus','sm')} Agregar usuario</button>
-    <div class="infobox">Cada persona entra con su usuario desde su propio celular.
-    La recepcionista usa el del mostrador, y desde el botón de arriba a la derecha se cambia de usuario.</div>
+    <div class="infobox">El celular del mostrador lo usan todas. El PIN aparece recién cuando
+    se toca plata, y el nombre de quien lo puso queda pegado a ese movimiento.</div>
     <div class="listcard">${DB.usuarios.map(u=>{
       const exc = Object.keys(u.permisos||{}).filter(k=>u.permisos[k]);
       const su = u.sucursalId?byId(DB.sucursales,u.sucursalId):null;
       const ar = nombreAreasDe(u);
-      return `<button class="lr" onclick="editarUsuario('${u.id}')" ${u.activo?'':'style="opacity:.5"'}>
-        <div class="av">${ini(u.nombre)}</div>
-        <div class="g"><b>${esc(u.nombre)}${u.activo?'':' <span class="bd">Inactivo</span>'}</b>
+      const plata = puedeCajaEse(u) || puedeReportesEse(u);
+      return `<div class="lr" ${u.activo?'':'style="opacity:.5"'}>
+        <button class="av" onclick="editarUsuario('${u.id}')">${ini(u.nombre)}</button>
+        <button class="g" style="text-align:left" onclick="editarUsuario('${u.id}')">
+          <b>${esc(u.nombre)}${u.activo?'':' <span class="bd">Inactivo</span>'}</b>
           <span>${ROLES[u.rol]}${ar?' · '+esc(ar):''}${su?' · '+esc(su.nombre):''}</span>
-          ${exc.length?`<span class="tiny" style="color:var(--warn)">${exc.length} permiso${exc.length>1?'s':''} distinto${exc.length>1?'s':''} al de su rol</span>`:''}</div>
-        ${ic('chev','sm')}</button>`;}).join('')}</div>
+          ${exc.length?`<span class="tiny" style="color:var(--warn)">${exc.length} permiso${exc.length>1?'s':''} distinto${exc.length>1?'s':''} al de su rol</span>`:''}
+          ${(plata&&!tienePin(u))?`<span class="tiny" style="color:var(--warn)">Le falta el PIN</span>`:''}</button>
+        ${puedePonerPines()?`<button class="btn xs ${tienePin(u)?'sec':''}" onclick="ponerPin('${u.id}')">
+          ${tienePin(u)?'PIN ●●●●':'Poner PIN'}</button>`:''}
+      </div>`;}).join('')}</div>
   </div>`;
 }
-function cambiarPedirClave(v){
+function cambiarPedirPin(v){
   if(!puedeConfig()){ toast('No tenés acceso a la configuración'); render(); return; }
-  if(v){
-    const yo = usuario();
-    const sinMail = DB.usuarios.filter(u=>u.activo!==false && !u.email);
-    if(!yo.email){
-      sheet('Falta tu mail', `
-        <div class="warnbox">${ic('alert','sm')} Antes de prender esto tenés que cargar
-          <b>tu propio mail</b>, si no te quedás afuera del sistema.</div>
-        <button class="btn" onclick="closeSheet();editarUsuario('${yo.id}')">Cargar mi mail</button>`);
-      render(); return;
-    }
-    sheet('Prender el login', `
-      <div class="infobox">A partir de ahora, para entrar hay que poner mail y contraseña.
-        Cada una tiene que tener su cuenta creada.</div>
-      ${sinMail.length?`<div class="warnbox">${ic('alert','sm')} <b>${sinMail.length}
-        ${sinMail.length===1?'persona se queda':'personas se quedan'} afuera</b> hasta que le cargues el mail:
-        ${sinMail.map(u=>esc(u.nombre)).join(', ')}.</div>`:''}
-      <button class="btn" onclick="hacerPedirClave(true)">${ic('lock','sm')} Prender igual</button>
-      <button class="btn sec" style="margin-top:8px" onclick="closeSheet();render()">Cancelar</button>`);
-    return;
+  if(!v){ hacerPedirPin(false); return; }
+  const yo = usuario();
+  const gentePlata = DB.usuarios.filter(u=>u.activo!==false && u.rol!=='mostrador'
+    && (puedeCajaEse(u)||puedeReportesEse(u)));
+  const sinPin = gentePlata.filter(u=>!tienePin(u));
+  if(!tienePin(yo) && gentePlata.some(u=>u.id===yo.id)){
+    sheet('Primero el tuyo', `
+      <div class="warnbox">${ic('alert','sm')} Antes de prender esto ponete <b>tu propio PIN</b>,
+        si no te quedás afuera de la caja.</div>
+      <button class="btn" onclick="closeSheet();ponerPin('${yo.id}')">Poner mi PIN</button>`);
+    render(); return;
   }
-  hacerPedirClave(false);
+  sheet('Prender el PIN', `
+    <div class="infobox" style="text-align:left">De acá en más, la agenda, la fila, las clientas y
+      los precios se usan igual que siempre, sin pedir nada.<br><br>
+      Para <b>cobrar, cargar un gasto, abrir o cerrar la caja, anular algo o ver los reportes</b>
+      va a pedir el PIN de cuatro números. Una vez puesto, no lo vuelve a pedir por
+      ${MINUTOS_SESION} minutos.</div>
+    ${sinPin.length?`<div class="warnbox" style="text-align:left">${ic('alert','sm')}
+      Todavía no tienen PIN: <b>${sinPin.map(u=>esc(u.nombre.split(' ')[0])).join(', ')}</b>.
+      Hasta que se los pongas no van a poder tocar la caja.</div>`:''}
+    <button class="btn" onclick="hacerPedirPin(true)">${ic('lock','sm')} Prender</button>
+    <button class="btn sec" style="margin-top:8px" onclick="closeSheet();render()">Cancelar</button>`);
 }
-function hacerPedirClave(v){
-  DB.cfg.pedirClave = !!v;
-  if(v) fbIniciar();
-  logAcc('Login con contraseña ' + (v?'prendido':'apagado'));
+function hacerPedirPin(v){
+  DB.cfg.pedirPin = !!v;
+  if(v){
+    /* Quien lo prende lo está haciendo desde SU celular, así que este
+       aparato queda a su nombre. Los del mostrador arrancan solos como
+       mostrador la primera vez que se abren, y si no, se cambia desde
+       "De quién es este celular". */
+    APA.modo='persona'; APA.usuarioId = usuario().id;
+    APA.sucursalId = APA.sucursalId || ST.sucursalId;
+    apaGuardar();
+  } else {
+    cerrarSesion();
+  }
+  logAcc('El PIN para la plata quedó ' + (v?'prendido':'apagado'));
   save(); closeSheet(); render();
-  toast(v?'Login prendido':'Login apagado');
+  toast(v?'PIN prendido':'PIN apagado');
 }
 function editarUsuario(usId){
   const u = usId?byId(DB.usuarios,usId):null;
@@ -8300,7 +8621,7 @@ migrar();
 save();
 aplicarMQ();
 ponerManifest();
-if(loginPrendido()) fbIniciar();
+/* el aparato se acuerda de quién es antes de dibujar nada */
 render();
 </script>
 </body>
