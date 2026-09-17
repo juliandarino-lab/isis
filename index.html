@@ -371,6 +371,33 @@ label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:0 0
   justify-content:center;gap:8px;background:#8E1520;color:#fff;padding:11px 14px;
   font-size:13px;font-weight:700;border-bottom:2px solid #6B0F18}
 
+/* ---------- la fila ---------- */
+.filacount{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:12px}
+.fc{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:13px 11px;text-align:center}
+.fc b{display:block;font-size:26px;line-height:1.1}
+.fc span{font-size:12px;color:var(--muted)}
+.fc.at{background:var(--freebg);border-color:var(--freeln)}
+.fc.at b{color:var(--freetx)}
+.filabar{display:flex;align-items:center;gap:14px;width:100%;background:var(--card);
+  border:1px solid var(--line);border-radius:13px;padding:11px 13px;margin-bottom:11px;
+  font:inherit;color:inherit;text-align:left;cursor:pointer}
+.filabar.hay{border-color:var(--acc);background:var(--accsoft)}
+.filabar .fb1,.filabar .fb2{font-size:13.5px;color:var(--muted)}
+.filabar b{font-size:19px;color:var(--ink);margin-right:4px}
+.filabar .fb3{margin-left:auto;display:flex}
+.fr{display:flex;align-items:center;gap:11px;padding:11px 8px;border-bottom:1px solid var(--line)}
+.fr:last-child{border-bottom:0}
+.fr .fic{font-size:22px;width:30px;text-align:center;flex:0 0 30px}
+.fr .g{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.fr .g b{font-size:14.5px}
+.fr .g span{font-size:12.5px;color:var(--muted)}
+.fr .pide{color:var(--acc)!important;font-weight:600;display:flex;align-items:center;gap:4px}
+.fr .fder{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex:0 0 auto}
+.esp-ok{font-size:12px;color:var(--muted)}
+.esp-medio{font-size:12px;color:var(--warn);font-weight:600}
+.esp-alto{font-size:12px;color:var(--stop);font-weight:700}
+button.kpi{font:inherit;text-align:center;cursor:pointer}
+
 /* ---------- pantalla de entrada ---------- */
 .login{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;
   justify-content:center;padding:22px;overflow-y:auto;z-index:50}
@@ -445,8 +472,25 @@ const MEDIOS = [
 const DIAS = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
 
 /* ---------- helpers ---------- */
+/* ============================================================
+   EL CÓDIGO INTERNO DE CADA COSA
+
+   Cada turno, cada cobro y cada movimiento lleva un código que lo
+   identifica. Antes ese código era un número que arrancaba en 1000
+   y subía de a uno EN CADA APARATO. O sea: el celular del mostrador
+   y el de Romi le ponían el MISMO código a dos turnos distintos.
+
+   Mientras cada celular estaba solo no molestaba. Con todos los
+   aparatos compartiendo los datos, eso hace que un turno pise a
+   otro, o que un cobro caiga en la visita equivocada. Es la clase
+   de error que no se ve hasta que ya rompió algo.
+
+   Ahora el código lleva el momento exacto en que se creó más un
+   pedazo al azar: dos aparatos no pueden generar el mismo ni
+   aunque toquen el botón en el mismo segundo.
+   ============================================================ */
 let _id = 1000;
-const uid = p => p + (++_id);
+const uid = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
 const hm  = m => String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
 const mh  = s => { const [h,m]=s.split(':').map(Number); return h*60+m; };
 const money = n => '$'+Math.round(n).toLocaleString('es-AR');
@@ -489,7 +533,8 @@ function seed(){
         permisos: JSON.parse(JSON.stringify(PERM_DEF))},
     sucursales:[], areas:[], servicios:[], profesionales:[], asign:[], horarios:[],
     bloqueos:[], clientas:[], visitas:[], espera:[], caja:[], gastos:[],
-    vouchers:[], paquetes:[], liquidaciones:[], usuarios:[], fichadas:[], log:[], mov:[] };
+    vouchers:[], paquetes:[], liquidaciones:[], usuarios:[], fichadas:[], log:[], mov:[],
+    fila:[] };
 
   /* sucursales */
   const S = [
@@ -899,6 +944,11 @@ function migrar(){
   if(DB.cfg.pedirClave===undefined) DB.cfg.pedirClave = false;
   if(DB.cfg.linkApp===undefined) DB.cfg.linkApp = LINK_POR_DEFECTO;
   if(DB.cfg.presentado===undefined) DB.cfg.presentado = false;
+  DB.fila = DB.fila || [];
+  /* la agenda va de media hora, de 9 a 19:30, igual en los cuatro locales */
+  if(!DB.cfg.paso)   DB.cfg.paso = 30;
+  if(!DB.cfg.abre)   DB.cfg.abre = '09:00';
+  if(!DB.cfg.cierra) DB.cfg.cierra = '19:30';
   /* volver a entrar como la última vez que se usó este aparato */
   if(DB.cfg.ultimoUsuario && byId(DB.usuarios, DB.cfg.ultimoUsuario)){
     ST.usuarioId = DB.cfg.ultimoUsuario;
@@ -1076,7 +1126,7 @@ const VISTA_OK = {
   home:()=>true,
   agenda:puedeVerAgenda, clientas:puedeVerClientas, ficha:puedeVerClientas,
   equipo:puedeVerEquipo, caja:puedeCobrar, vouchers:puedeCobrar,
-  espera:puedeEditarAgenda, comisiones:puedeVerComisiones,
+  espera:puedeEditarAgenda, fila:puedeVerAgenda, comisiones:puedeVerComisiones,
   reportes:puedeVerReportes,
   config:puedeConfig, servicios:puedeConfig, areas:puedeConfig, usuarios:puedeConfig,
   precios:()=>true
@@ -1590,11 +1640,12 @@ function render(){
   const suc = acomodarSucursal();
   const views = {home:vHome, agenda:vAgenda, clientas:vClientas, ficha:vFicha,
     equipo:vEquipo, caja:vCaja, config:vConfig, servicios:vServicios, areas:vAreas,
-    comisiones:vComisiones, reportes:vReportes, espera:vEspera, vouchers:vVouchers,
+    comisiones:vComisiones, reportes:vReportes, espera:vEspera, vouchers:vVouchers, fila:vFila,
     usuarios:vUsuarios, precios:vPrecios};
   const titulos = {home:DB.cfg.negocio, agenda:'Agenda', clientas:'Clientas', ficha:'Clienta',
     equipo:'Equipo', caja:'Caja', config:'Configuración', servicios:'Servicios', areas:'Áreas',
-    comisiones:'Comisiones', reportes:'Reportes', espera:'Lista de espera', vouchers:'Vouchers',
+    comisiones:'Comisiones', reportes:'Reportes', espera:'Avisar cuando haya lugar',
+    vouchers:'Vouchers', fila:'La fila',
     usuarios:'Usuarios', precios:'Precios'};
   const back = !['home','agenda','clientas','equipo','caja'].includes(ST.view);
 
@@ -2083,6 +2134,376 @@ function setUsuario(id){
   ST.view='home'; save(); closeSheet(); render();
 }
 
+
+/* ============================================================
+   LA FILA — LA CLIENTA QUE LLEGA SIN TURNO
+
+   Así trabajan de verdad: manicuría, pedicuría, belleza de pies y
+   depilación descartable NO se dan por turno. La clienta llega,
+   la recepcionista le pide nombre y teléfono, y espera.
+
+   Y algo que pasa todo el tiempo: muchas piden por una profesional
+   en particular y prefieren esperarla. Eso cambia quién la puede
+   levantar, así que está puesto como una marca bien visible.
+
+   Cuando pasa a atenderse deja de ser "fila" y se convierte en una
+   visita común y corriente. Por eso el cobro, la comisión y la caja
+   funcionan exactamente igual que con un turno: no hay dos caminos
+   para la plata, hay uno solo.
+   ============================================================ */
+const FILA_EST = {esp:'Esperando', at:'Atendiéndose', fin:'Terminada', fue:'Se fue'};
+
+function filaDeHoy(sid){
+  sid = sid || ST.sucursalId;
+  return (DB.fila||[]).filter(f=>f.fecha===hoy() && f.sucursalId===sid);
+}
+const esperando   = sid => filaDeHoy(sid).filter(f=>f.estado==='esp');
+const atendiendose= sid => filaDeHoy(sid).filter(f=>f.estado==='at');
+
+/* hace cuánto que espera, y qué tan grave es */
+function esperaDe(f){
+  const min = Math.max(0, ahoraMin() - mh(f.llegada));
+  const nivel = min>=35 ? 'alto' : min>=20 ? 'medio' : 'ok';
+  const txt = min<1 ? 'recién llegó' : min<60 ? 'hace '+min+' min'
+    : 'hace '+Math.floor(min/60)+'h '+(min%60?(min%60)+'m':'');
+  return {min, nivel, txt};
+}
+
+/* ---------- anotar a la que llega ---------- */
+let FI = {clientaId:null, servicioId:null, areaId:null, profPedida:null, q:''};
+
+function llegoAlguien(){
+  if(!puedeEditarAgenda()){ toast('No podés anotar en la fila'); return; }
+  FI = {clientaId:null, servicioId:null, areaId:null, profPedida:null, q:''};
+  pasoClienteFila();
+}
+
+function pasoClienteFila(){
+  sheet('¿Quién llegó?', `
+    <div class="f"><input id="fq" placeholder="Nombre o teléfono" autocomplete="off"
+      oninput="FI.q=this.value;pintarClientasFila()"></div>
+    <div id="fres"></div>`, {focus:'fq'});
+  pintarClientasFila();
+}
+function pintarClientasFila(){
+  const box = document.getElementById('fres'); if(!box) return;
+  const q = (FI.q||'').trim().toLowerCase();
+  const nq = q.replace(/\D/g,'');
+  let hay = DB.clientas;
+  if(q) hay = hay.filter(c=> c.nombre.toLowerCase().includes(q)
+    || (nq.length>=3 && (c.tel||'').replace(/\D/g,'').includes(nq)));
+  else hay = clientasRecientes();
+  hay = hay.slice(0,8);
+  const exacta = q && hay.some(c=>c.nombre.toLowerCase()===q);
+  box.innerHTML = `
+    ${(q && !exacta)?`<button class="btn" style="margin-bottom:11px"
+      onclick="nuevaEnLaFila()">${ic('plus','sm')} Nueva: ${esc(FI.q.trim())}</button>`:''}
+    <div class="listcard">${hay.length?hay.map(c=>`
+      <button class="lr" onclick="FI.clientaId='${c.id}';pasoServicioFila()">
+        <div class="av">${ini(c.nombre)}</div>
+        <div class="g"><b>${esc(c.nombre)}</b><span>${esc(c.tel||'sin teléfono')}</span></div>
+        ${ic('chev','sm')}</button>`).join('')
+      :`<div class="empty">${q?'No hay ninguna con ese nombre.':'Todavía no hay clientas cargadas.'}</div>`}</div>
+    ${(!q)?`<button class="btn sec" style="margin-top:11px" onclick="nuevaEnLaFila()">
+      ${ic('plus','sm')} Es una clienta nueva</button>`:''}`;
+}
+/* las últimas que vinieron: casi siempre la que llega es una de estas */
+function clientasRecientes(){
+  const orden = {};
+  DB.visitas.slice(-400).forEach(v=>{ orden[v.clientaId] = v.fecha; });
+  return [...DB.clientas].sort((a,b)=>(orden[b.id]||'').localeCompare(orden[a.id]||''));
+}
+
+function nuevaEnLaFila(){
+  const puesto = (FI.q||'').trim();
+  sheet('Clienta nueva', `
+    <div class="infobox">Con el nombre alcanza. Si no quiere dar el teléfono, dejalo vacío.</div>
+    <div class="f"><label>Nombre y apellido</label><input id="fn" value="${esc(puesto)}" autocomplete="off"></div>
+    <div class="f"><label>Teléfono</label><input id="ft" inputmode="tel" placeholder="221 555-1234"></div>
+    <button class="btn" onclick="guardarNuevaEnFila()">Guardar y seguir</button>`, {focus:'fn'});
+  setTimeout(()=>{ const e=document.getElementById('fn'); if(e && puesto){ e.setSelectionRange(puesto.length,puesto.length); } },60);
+}
+function guardarNuevaEnFila(){
+  if(!puedeEditarClientas()){ toast('No tenés permiso para cargar clientas'); return; }
+  const n=(document.getElementById('fn').value||'').trim();
+  if(!n){ toast('Falta el nombre'); return; }
+  const c={id:uid('cl'), nombre:n, tel:(document.getElementById('ft').value||'').trim(),
+    nacimiento:'', notas:'', notasInt:'', alta:hoy()};
+  DB.clientas.push(c); save();
+  FI.clientaId=c.id;
+  pasoServicioFila();
+}
+
+function pasoServicioFila(){
+  const cl = byId(DB.clientas, FI.clientaId);
+  const areas = areasDeSucursal();
+  const ar = FI.areaId && areas.find(a=>a.id===FI.areaId) ? FI.areaId : (areas[0]||{}).id;
+  FI.areaId = ar;
+  const svs = DB.servicios.filter(x=>x.areaId===ar && x.activo);
+  sheet('¿Qué se va a hacer?', `
+    <div class="card cardp" style="margin-bottom:11px;display:flex;align-items:center;gap:11px">
+      <div class="av">${ini(cl.nombre)}</div>
+      <div style="flex:1;min-width:0"><div style="font-weight:700;font-size:15.5px">${esc(cl.nombre)}</div>
+        <div class="small muted">${esc(cl.tel||'sin teléfono')}</div></div>
+      <button class="btn sm sec" onclick="pasoClienteFila()">Cambiar</button>
+    </div>
+    ${(cl.notas)?`<div class="warnbox">${ic('alert','sm')} ${esc(cl.notas)}</div>`:''}
+    <div class="subtabs" style="padding:0 0 11px">${areas.map(a=>`
+      <button class="ptab ${a.id===ar?'on':''}" onclick="FI.areaId='${a.id}';pasoServicioFila()">
+        ${a.icono} ${esc(a.nombre)}</button>`).join('')}</div>
+    <div class="listcard">${svs.length?svs.map(x=>`
+      <button class="lr" onclick="FI.servicioId='${x.id}';pasoConfirmarFila()">
+        <div class="g"><b>${esc(x.nombre)}</b><span>${x.dur} min${puedeVerPrecios()?' · '+money(x.contado):''}</span></div>
+        ${ic('chev','sm')}</button>`).join('')
+      :`<div class="empty">Esta área no tiene servicios cargados.</div>`}</div>`);
+}
+
+function pasoConfirmarFila(){
+  const cl=byId(DB.clientas,FI.clientaId), sv=byId(DB.servicios,FI.servicioId);
+  const profes = profesDelDia(FI.areaId, hoy()).filter(p=>profesDe(FI.areaId,FI.servicioId).some(x=>x.id===p.id));
+  sheet('Anotar en la fila', `
+    <div class="card cardp" style="margin-bottom:13px">
+      <div style="font-weight:700;font-size:16px">${esc(cl.nombre)}</div>
+      <div class="small muted">${esc(sv.nombre)} · ${sv.dur} min</div>
+    </div>
+    <div class="f"><label>¿Pide por alguien en particular?</label>
+      <div class="small muted" style="margin:-3px 0 8px">Si pide por una, la espera a ella
+        aunque se desocupe otra.</div>
+      <div class="subtabs" style="padding:0">
+        <button class="ptab ${!FI.profPedida?'on':''}" onclick="FI.profPedida=null;pasoConfirmarFila()">
+          La que esté libre</button>
+        ${profes.map(p=>`<button class="ptab ${FI.profPedida===p.id?'on':''}"
+          onclick="FI.profPedida='${p.id}';pasoConfirmarFila()">${esc(p.nombre.split(' ')[0])}</button>`).join('')}
+      </div></div>
+    <button class="btn" onclick="guardarEnFila()">${ic('plus','sm')} Anotar en la fila</button>`);
+}
+
+function guardarEnFila(){
+  if(!puedeEditarAgenda()){ toast('No podés anotar en la fila'); return; }
+  const f = {id:uid('fi'), sucursalId:ST.sucursalId, fecha:hoy(), clientaId:FI.clientaId,
+    servicioId:FI.servicioId, areaId:FI.areaId, profPedida:FI.profPedida,
+    llegada:horaAhora(), estado:'esp', visitaId:null, tiquera:'',
+    usuario:usuario().nombre, ts:new Date().toISOString()};
+  DB.fila.push(f);
+  logAcc(`Llegó ${byId(DB.clientas,f.clientaId).nombre} (fila)`);
+  save(); closeSheet(); ST.view='fila'; render();
+  toast('Anotada en la fila');
+}
+
+/* ---------- pasa a atenderse ---------- */
+function pasaAtenderse(fid){
+  if(!puedeEditarAgenda()){ toast('No podés tocar la fila'); return; }
+  const f=byId(DB.fila,fid); if(!f) return;
+  const cl=byId(DB.clientas,f.clientaId), sv=byId(DB.servicios,f.servicioId);
+  const hacen = profesDelDia(f.areaId, hoy()).filter(p=>profesDe(f.areaId,f.servicioId).some(x=>x.id===p.id));
+  const pedida = f.profPedida ? byId(DB.profesionales,f.profPedida) : null;
+  const ocupada = pid => atendiendose().some(x=>x.profId===pid);
+  const lista = pedida ? hacen.filter(p=>p.id===pedida.id) : hacen;
+  const otras = pedida ? hacen.filter(p=>p.id!==pedida.id) : [];
+  sheet('¿Con quién pasa?', `
+    <div class="card cardp" style="margin-bottom:12px">
+      <div style="font-weight:700;font-size:16px">${esc(cl.nombre)}</div>
+      <div class="small muted">${esc(sv.nombre)} · esperando ${esperaDe(f).txt}</div>
+    </div>
+    ${pedida?`<div class="infobox">Pidió por <b>${esc(pedida.nombre)}</b>.</div>`:''}
+    <div class="listcard">${lista.length?lista.map(p=>`
+      <button class="lr" onclick="hacerPasar('${fid}','${p.id}')">
+        <div class="av">${ini(p.nombre)}</div>
+        <div class="g"><b>${esc(p.nombre)}</b>
+          <span>${ocupada(p.id)?'Ahora está atendiendo':'Libre'}</span></div>
+        ${ic('chev','sm')}</button>`).join('')
+      :`<div class="empty">Hoy no hay nadie cargada para ese servicio.</div>`}</div>
+    ${otras.length?`<div class="sep"></div>
+      <div class="small muted" style="margin-bottom:7px">Si acepta que la atienda otra:</div>
+      <div class="listcard">${otras.map(p=>`
+        <button class="lr" onclick="hacerPasar('${fid}','${p.id}')">
+          <div class="av">${ini(p.nombre)}</div>
+          <div class="g"><b>${esc(p.nombre)}</b><span>${ocupada(p.id)?'Ahora está atendiendo':'Libre'}</span></div>
+          ${ic('chev','sm')}</button>`).join('')}</div>`:''}`);
+}
+
+function hacerPasar(fid, pid){
+  if(!puedeEditarAgenda()){ toast('No podés tocar la fila'); return; }
+  const f=byId(DB.fila,fid); if(!f) return;
+  const sv=byId(DB.servicios,f.servicioId);
+  const as=DB.asign.find(a=>a.profId===pid && a.areaId===f.areaId);
+  const pq=paqueteActivo(f.clientaId, f.servicioId);
+  const linea = {id:uid('ln'), servicioId:f.servicioId, profId:pid, areaId:f.areaId,
+    hora:horaAhora(), dur:sv.dur, estado:'serv', precio:sv.contado, descuento:0,
+    comisionPct:(as&&as.comision!=null)?as.comision:sv.comision, exenta:false, motivo:'',
+    paqueteId: pq?pq.id:null, voucherId:null, consumida:false, liqId:null, forzado:'',
+    sinTurno:true};
+  const v = {id:uid('vi'), clientaId:f.clientaId, sucursalId:f.sucursalId, fecha:hoy(),
+    creada:new Date().toISOString(), lineas:[linea], pagos:[], sinTurno:true};
+  DB.visitas.push(v);
+  f.estado='at'; f.visitaId=v.id; f.profId=pid; f.desde=horaAhora();
+  logAcc(`Pasó a atenderse: ${byId(DB.clientas,f.clientaId).nombre} con ${byId(DB.profesionales,pid).nombre}`);
+  save(); closeSheet(); render();
+  toast('Pasó a atenderse');
+}
+
+function terminoFila(fid){
+  if(!puedeEditarAgenda()){ toast('No podés tocar la fila'); return; }
+  const f=byId(DB.fila,fid); if(!f) return;
+  const v=f.visitaId?byId(DB.visitas,f.visitaId):null;
+  if(v) v.lineas.forEach(l=>{ if(l.estado==='serv') l.estado='fin'; });
+  f.estado='fin'; f.hasta=horaAhora();
+  save(); render();
+  if(v && puedeCobrar()) setTimeout(()=>cobrar(v.id), 300);
+}
+
+function seFueDeLaFila(fid){
+  if(!puedeEditarAgenda()){ toast('No podés tocar la fila'); return; }
+  const f=byId(DB.fila,fid); if(!f) return;
+  const cl=byId(DB.clientas,f.clientaId);
+  sheet('Se fue sin atenderse', `
+    <div class="warnbox">${ic('alert','sm')} <b>${esc(cl.nombre)}</b> sale de la fila.
+      Queda anotado que vino y no la pudieron atender.</div>
+    <button class="btn dan" onclick="hacerSeFue('${fid}')">Sí, se fue</button>
+    <button class="btn sec" style="margin-top:8px" onclick="closeSheet()">Cancelar</button>`);
+}
+function hacerSeFue(fid){
+  const f=byId(DB.fila,fid); if(!f) return;
+  f.estado='fue'; f.hasta=horaAhora();
+  logAcc(`Se fue sin atenderse: ${byId(DB.clientas,f.clientaId).nombre}`);
+  save(); closeSheet(); render(); toast('Anotado');
+}
+
+/* el número de tiquera: papelito preimpreso que trae la clienta */
+function ponerTiquera(fid){
+  const f=byId(DB.fila,fid); if(!f) return;
+  sheet('Número de tiquera', `
+    <div class="infobox">Es el número del papelito que le dio la profesional. Es opcional:
+      sirve para cuadrar contra el talonario.</div>
+    <div class="f"><label>Número</label><input id="tq" value="${esc(f.tiquera||'')}" autocomplete="off"></div>
+    <button class="btn" onclick="guardarTiquera('${fid}')">Guardar</button>`, {focus:'tq'});
+}
+function guardarTiquera(fid){
+  const f=byId(DB.fila,fid); if(!f) return;
+  f.tiquera=(document.getElementById('tq').value||'').trim();
+  const v=f.visitaId?byId(DB.visitas,f.visitaId):null; if(v) v.tiquera=f.tiquera;
+  save(); closeSheet(); render(); toast('Guardado');
+}
+
+/* cuando una profesional se desocupa: ¿a quién le toca? */
+function quienSigue(pid){
+  const p=byId(DB.profesionales,pid);
+  const mias = DB.asign.filter(a=>a.profId===pid).map(a=>a.areaId);
+  const cola = esperando()
+    .filter(f=>mias.includes(f.areaId) && (!f.profPedida || f.profPedida===pid))
+    .sort((a,b)=>mh(a.llegada)-mh(b.llegada));
+  sheet('¿Quién sigue para '+esc(p.nombre.split(' ')[0])+'?', `
+    ${cola.length?`<div class="listcard">${cola.map((f,i)=>{
+      const c=byId(DB.clientas,f.clientaId), sv=byId(DB.servicios,f.servicioId);
+      const a=byId(DB.areas,f.areaId), e=esperaDe(f);
+      return `<button class="lr" onclick="closeSheet();pasaAtenderse('${f.id}')">
+        <div class="av">${i===0?'1º':(i+1)+'º'}</div>
+        <div class="g"><b>${esc(c.nombre)}</b>
+          <span>${a?a.icono+' ':''}${esc(sv.nombre)} · ${e.txt}</span>
+          ${f.profPedida===pid?`<span class="tiny" style="color:var(--acc)">Pidió por ella</span>`:''}</div>
+        ${ic('chev','sm')}</button>`;}).join('')}</div>`
+    :`<div class="empty">No hay nadie esperando para lo que ella hace.</div>`}`);
+}
+
+/* ---------- la pantalla ---------- */
+
+/* Los contadores del inicio antes eran cartelitos muertos: decían un
+   número y no hacían nada. Ahora cada uno abre la lista de esos turnos. */
+function verEstado(k){
+  const nombres = {res:'Reservados', conf:'Confirmados', lleg:'En el local', no:'No vinieron'};
+  const ests = k==='lleg' ? ['lleg','serv'] : [k];
+  const ls = lineasDe(hoy(), (l,v)=> v.sucursalId===ST.sucursalId && ests.includes(l.estado))
+    .sort((a,b)=>mh(a.hora)-mh(b.hora));
+  sheet(nombres[k]+' · hoy', `
+    ${ls.length?`<div class="listcard">${ls.map(l=>{
+      const v=l.visita, c=byId(DB.clientas,v.clientaId), sv=byId(DB.servicios,l.servicioId);
+      const p=byId(DB.profesionales,l.profId), a=byId(DB.areas,l.areaId);
+      return `<button class="lr" onclick="closeSheet();irAlTurno('${v.id}','${l.id}')">
+        <div class="av">${esc(l.hora)}</div>
+        <div class="g"><b>${esc(c?c.nombre:'—')}</b>
+          <span>${a?a.icono+' ':''}${esc(sv?sv.nombre:'')}${p?' · '+esc(p.nombre.split(' ')[0]):''}</span></div>
+        ${ic('chev','sm')}</button>`;}).join('')}</div>`
+    :`<div class="empty">No hay ninguno hoy.</div>`}`);
+}
+function vFila(){
+  const esp = esperando().sort((a,b)=>mh(a.llegada)-mh(b.llegada));
+  const ate = atendiendose().sort((a,b)=>mh(a.desde||a.llegada)-mh(b.desde||b.llegada));
+  const cerradas = filaDeHoy().filter(f=>f.estado==='fin'||f.estado==='fue');
+  const areas = areasDeSucursal();
+  const filtro = ST.filaArea && areas.some(a=>a.id===ST.filaArea) ? ST.filaArea : null;
+  const pasa = f => !filtro || f.areaId===filtro;
+
+  const reng = (f, modo) => {
+    const c=byId(DB.clientas,f.clientaId), sv=byId(DB.servicios,f.servicioId);
+    const a=byId(DB.areas,f.areaId), e=esperaDe(f);
+    const ped = f.profPedida?byId(DB.profesionales,f.profPedida):null;
+    const pr  = f.profId?byId(DB.profesionales,f.profId):null;
+    return `<div class="fr fr-${modo}">
+      <div class="fic">${a?a.icono:'•'}</div>
+      <div class="g">
+        <b>${esc(c?c.nombre:'—')}</b>
+        <span>${esc(sv?sv.nombre:'')}${pr?' · '+esc(pr.nombre.split(' ')[0]):''}</span>
+        ${ped&&modo==='esp'?`<span class="pide">${ic('user','sm')} Pide por ${esc(ped.nombre.split(' ')[0])}</span>`:''}
+        ${f.tiquera?`<span class="tiny muted">Tiquera ${esc(f.tiquera)}</span>`:''}
+      </div>
+      <div class="fder">
+        ${modo==='esp'?`<span class="esp-${e.nivel}">${e.txt}</span>`
+          :`<span class="tiny muted">desde ${esc(f.desde||f.llegada)}</span>`}
+        ${puedeEditarAgenda()?(modo==='esp'
+          ? `<button class="btn sm" onclick="pasaAtenderse('${f.id}')">Pasa</button>`
+          : `<button class="btn sm ok" onclick="terminoFila('${f.id}')">Terminó</button>`):''}
+      </div>
+    </div>`;
+  };
+
+  return `<div class="pad">
+    <div class="filacount">
+      <div class="fc"><b>${esp.length}</b><span>Esperando</span></div>
+      <div class="fc at"><b>${ate.length}</b><span>Atendiéndose</span></div>
+    </div>
+
+    ${puedeEditarAgenda()?`<button class="btn" style="margin-bottom:12px" onclick="llegoAlguien()">
+      ${ic('plus')} Llegó alguien</button>`:''}
+
+    ${areas.length>1?`<div class="subtabs" style="padding:0 0 11px">
+      <button class="ptab ${!filtro?'on':''}" onclick="ST.filaArea=null;render()">Todas</button>
+      ${areas.map(a=>{const n=filaDeHoy().filter(f=>(f.estado==='esp'||f.estado==='at')&&f.areaId===a.id).length;
+        return `<button class="ptab ${filtro===a.id?'on':''}" onclick="ST.filaArea='${a.id}';render()">
+          ${a.icono} ${esc(a.nombre)}${n?' · '+n:''}</button>`;}).join('')}
+    </div>`:''}
+
+    <div class="h3">Esperando</div>
+    <div class="card cardp" style="padding:6px">
+      ${esp.filter(pasa).length?esp.filter(pasa).map(f=>reng(f,'esp')).join('')
+        :`<div class="empty" style="padding:16px">No hay nadie esperando.</div>`}
+    </div>
+
+    <div class="h3">Atendiéndose</div>
+    <div class="card cardp" style="padding:6px">
+      ${ate.filter(pasa).length?ate.filter(pasa).map(f=>reng(f,'at')).join('')
+        :`<div class="empty" style="padding:16px">Nadie se está atendiendo ahora.</div>`}
+    </div>
+
+    ${cerradas.length?`<div class="h3">Ya pasaron hoy · ${cerradas.length}</div>
+    <div class="listcard">${cerradas.slice(-12).reverse().map(f=>{
+      const c=byId(DB.clientas,f.clientaId), sv=byId(DB.servicios,f.servicioId);
+      const a=byId(DB.areas,f.areaId);
+      return `<div class="lr" style="opacity:.75">
+        <div class="av">${a?a.icono:'•'}</div>
+        <div class="g"><b>${esc(c?c.nombre:'—')}</b>
+          <span>${esc(sv?sv.nombre:'')} · ${f.estado==='fue'?'se fue sin atenderse':'terminó '+esc(f.hasta||'')}</span></div>
+        ${(f.estado==='fin'&&puedeEditarAgenda())?`<button class="btn sm sec" onclick="ponerTiquera('${f.id}')">Tiquera</button>`:''}
+      </div>`;}).join('')}</div>`:''}
+
+    ${esp.length&&puedeEditarAgenda()?`<div class="sep"></div>
+      <div class="small muted" style="margin-bottom:7px">Si alguna se cansó de esperar:</div>
+      <div class="listcard">${esp.map(f=>{const c=byId(DB.clientas,f.clientaId);
+        return `<button class="lr" onclick="seFueDeLaFila('${f.id}')">
+          <div class="g"><b>${esc(c?c.nombre:'—')}</b><span>marcar que se fue</span></div>
+          ${ic('x','sm')}</button>`;}).join('')}</div>`:''}
+  </div>`;
+}
+
 /* ============================================================
    INICIO
    ============================================================ */
@@ -2095,24 +2516,31 @@ function vHome(){
   const perdidas = clientasPerdidas();
   const pqPorTerminar = DB.paquetes.filter(p=>p.total-p.usadas<=1 && p.usadas<p.total);
 
+  const esp = esperando().length, ate = atendiendose().length;
   return `<div class="pad">
     ${sucursalesDeUnVistazo()}
+
+    ${(esp||ate||puedeEditarAgenda())?`<button class="filabar ${esp?'hay':''}" onclick="go('fila')">
+      <span class="fb1"><b>${esp}</b> esperando</span>
+      <span class="fb2"><b>${ate}</b> atendiéndose</span>
+      <span class="fb3">${ic('chev','sm')}</span></button>`:''}
 
     ${elDia()}
 
     ${puedeEditarAgenda()?`<button class="btn" style="margin-bottom:9px" onclick="nuevoTurno()">${ic('plus')} Nuevo turno</button>`:''}
     <div class="q2">
       ${puedeCobrar()?`<button class="qb" onclick="recepcionRapida()"><b>Recepción rápida</b><span>Buscar a una clienta y cobrarle</span></button>`:''}
-      ${puedeEditarAgenda()?`<button class="qb" onclick="quienEstaLibre()"><b>¿Quién está libre ahora?</b><span>Para la que llega sin turno</span></button>`:''}
+      ${puedeEditarAgenda()?`<button class="qb" onclick="llegoAlguien()"><b>Llegó alguien sin turno</b><span>Anotarla en la fila</span></button>`:''}
+      ${puedeEditarAgenda()?`<button class="qb" onclick="quienEstaLibre()"><b>¿Quién está libre ahora?</b><span>Ver huecos al toque</span></button>`:''}
       ${puedeEditarAgenda()?`<button class="qb" onclick="cuandoHayLugar()"><b>¿Cuándo hay lugar?</b><span>El primer turno de cada servicio</span></button>`:''}
       ${puedeVerAgenda()?`<button class="qb" onclick="buscarAgenda()"><b>Buscar un turno</b><span>Si no sabés qué día era</span></button>`:''}
     </div>
 
     <div class="kpis">
-      <div class="kpi res"><b>${c('res')}</b><span>Reservados</span></div>
-      <div class="kpi conf"><b>${c('conf')}</b><span>Confirmados</span></div>
-      <div class="kpi lleg"><b>${c('lleg')+c('serv')}</b><span>En el local</span></div>
-      <div class="kpi no"><b>${c('no')}</b><span>No vinieron</span></div>
+      <button class="kpi res" onclick="verEstado('res')"><b>${c('res')}</b><span>Reservados</span></button>
+      <button class="kpi conf" onclick="verEstado('conf')"><b>${c('conf')}</b><span>Confirmados</span></button>
+      <button class="kpi lleg" onclick="verEstado('lleg')"><b>${c('lleg')+c('serv')}</b><span>En el local</span></button>
+      <button class="kpi no" onclick="verEstado('no')"><b>${c('no')}</b><span>No vinieron</span></button>
     </div>
 
     <div class="tiles">
@@ -5944,7 +6372,7 @@ function hacerCero(){
     sucursales:[], areas:[], servicios:[], profesionales:[], asign:[], horarios:[],
     bloqueos:[], clientas:[], visitas:[], espera:[], caja:[], gastos:[],
     vouchers:[], paquetes:[], liquidaciones:[], usuarios:[mio],
-    excepciones:[], fichadas:[], log:[], mov:[]
+    excepciones:[], fichadas:[], log:[], mov:[], fila:[]
   };
   ST.usuarioId = mio.id; ST.sucursalId = null; ST.areaId = null;
   ST.clientaId = null; ST.visitaId = null; ST.cajaFecha = null; ST.view = 'config';
@@ -5987,6 +6415,7 @@ function hacerLimpieza(){
   if(c('li_tur')){ DB.visitas=[]; hecho.push('turnos'); }
   if(c('li_caja')){ DB.caja=[]; DB.gastos=[]; DB.fichadas=[]; DB.mov=[]; DB.cfg.fondoCaja=0;
     hecho.push('caja y fichajes'); }
+  if(c('li_tur')) DB.fila=[];
   if(c('li_vou')){ DB.vouchers=[]; DB.paquetes=[]; hecho.push('vouchers y paquetes'); }
   if(c('li_esp')){ DB.espera=[]; DB.liquidaciones=[]; DB.log=[]; hecho.push('espera y liquidaciones'); }
   if(c('li_cli')){ DB.clientas=[]; hecho.push('clientas'); }
