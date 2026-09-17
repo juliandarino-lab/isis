@@ -61,6 +61,18 @@ label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:0 0
 
 .pad{padding:14px}
 .h2{font-size:19px;font-weight:700;letter-spacing:-.02em;margin:0 0 12px}
+.tecmot{text-align:center;font-size:13.5px;color:var(--muted);margin:2px 0 16px;line-height:1.4}
+.tecpuntos{display:flex;justify-content:center;gap:14px;margin-bottom:10px}
+.tecpuntos i{width:15px;height:15px;border-radius:50%;border:2px solid var(--line);background:transparent}
+.tecpuntos i.on{background:var(--pri);border-color:var(--pri)}
+.tecmsg{text-align:center;font-size:12.5px;color:var(--ok);min-height:19px;margin-bottom:10px}
+.tecmsg.mal{color:var(--stop)}
+.teclado{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:290px;margin:0 auto}
+.tec{height:62px;border-radius:14px;border:1px solid var(--line);background:var(--card);
+  font-size:25px;font-weight:600;color:var(--ink);cursor:pointer;display:flex;
+  align-items:center;justify-content:center;font-family:inherit}
+.tec:active{background:var(--freebg);transform:scale(.97)}
+.tec.bo{font-size:17px;color:var(--muted)}
 .plist{display:flex;flex-direction:column;gap:7px;margin-bottom:15px}
 .prow{display:flex;align-items:center;gap:10px;width:100%;background:var(--card);
   border:1px solid var(--line);border-radius:12px;padding:11px 13px;text-align:left;
@@ -1233,6 +1245,30 @@ function migrar(){
     (DB.areas||[]).forEach(a=>{ if(a.porTurno===undefined) a.porTurno = AREAS_CON_TURNO.includes(a.nombre); });
     DB.cfg.v = 6;
   }
+  /* EL EJEMPLO VIEJO.
+     Los datos de ejemplo se arman UNA sola vez, la primera vez que se abre
+     la app. El celular que ya la tenía instalada se quedó con el ejemplo
+     viejo: tres locales inventados (Centro, Norte, Shopping), diez
+     profesionales y la fila vacía. Por eso Julián no veía los nombres de
+     verdad. Si lo que hay guardado es EXACTAMENTE ese ejemplo y nadie tocó
+     nada, se rehace de cero con el nuevo. Si cargaron algo propio, no se
+     toca ni un dato. */
+  if((!DB.cfg.v || DB.cfg.v < 7) && esElEjemploViejo()){
+    const antes = DB.cfg.presentado;
+    const D = seed();
+    D.cfg.presentado = antes;
+    D.cfg.pedirPin = false;
+    D.cfg.v = 7;
+    DB = D;
+    ST.usuarioId = (DB.usuarios[0]||{}).id;
+    ST.sucursalId = (DB.sucursales[0]||{}).id;
+    ST.areaId = null;
+  }
+  if(!DB.cfg.v || DB.cfg.v < 7){
+    delete DB.cfg.pedirClave;
+    DB.cfg.v = 7;
+  }
+  if(DB.cfg.pedirPin===undefined) DB.cfg.pedirPin = false;
   /* volver a entrar como la última vez que se usó este aparato */
   if(DB.cfg.ultimoUsuario && byId(DB.usuarios, DB.cfg.ultimoUsuario)){
     ST.usuarioId = DB.cfg.ultimoUsuario;
@@ -1244,6 +1280,14 @@ function migrar(){
   /* las fotos de fichaje viejas se borran solas para no llenar la memoria */
   const lim = addDays(hoy(), -60);
   DB.fichadas.forEach(f=>{ if(f.fecha<lim){ delete f.fotoEntrada; delete f.fotoSalida; } });
+}
+/* ¿lo guardado es el ejemplo viejo tal cual salió, sin nada propio? */
+function esElEjemploViejo(){
+  const nom = (DB.sucursales||[]).map(x=>x.nombre).sort().join('|');
+  if(nom !== 'Centro|Norte|Shopping') return false;
+  if((DB.profesionales||[]).length !== 10) return false;
+  if((DB.usuarios||[]).length > 6) return false;
+  return true;
 }
 let SIN_ESPACIO = false;
 function save(){
@@ -1880,8 +1924,69 @@ function sheet(title, body, opts={}){
       </div>
     </div>`;
   if(opts.focus) setTimeout(()=>{const e=document.getElementById(opts.focus); if(e)e.focus();},80);
+  ponerCapa('hoja');
 }
-function closeSheet(){ document.getElementById('modal').innerHTML=''; }
+function closeSheet(){
+  const abierta = !!document.getElementById('modal').innerHTML;
+  document.getElementById('modal').innerHTML='';
+  if(abierta) sacarCapa('hoja');
+}
+
+/* ============================================================
+   EL BOTÓN DE ATRÁS DEL CELULAR
+   En Android, "atrás" en una página web se va de la página: te
+   saca de ISIS en el medio del trabajo. Eso no puede pasar.
+   Acá "atrás" cierra lo que esté abierto arriba de todo: primero
+   la ventanita, después la pantalla, y recién cuando ya no queda
+   nada, con dos toques seguidos, sale.
+   ============================================================ */
+let CAPAS = [];          /* lo que se fue abriendo: 'hoja' o 'vista' */
+let VISTAS = [];         /* de qué pantalla venía */
+let VOLVIENDO = false;   /* para no morderse la cola */
+let SALIR_HASTA = 0;     /* el doble toque para salir */
+
+function ponerCapa(tipo){
+  CAPAS.push(tipo);
+  try{ history.pushState({isis:CAPAS.length}, ''); }catch(e){}
+}
+/* cerramos algo nosotros (con la X o con un botón): hay que sacar
+   también el escalón del historial, si no "atrás" queda desfasado */
+function sacarCapa(tipo){
+  if(CAPAS[CAPAS.length-1] !== tipo) return;
+  CAPAS.pop();
+  VOLVIENDO = true;
+  try{ history.back(); }catch(e){ VOLVIENDO = false; }
+}
+function engancharAtras(){
+  /* Se deja SIEMPRE un escalón de sobra abajo de la app. Sin eso, el
+     primer "atrás" en el inicio se va de la página y no hay forma de
+     frenarlo: cuando nos enteramos, ya salió. Con el escalón, ese primer
+     atrás cae adentro de la app y ahí sí se puede avisar. */
+  try{
+    history.replaceState({isis:'piso'}, '');
+    history.pushState({isis:'app'}, '');
+  }catch(e){}
+  window.addEventListener('popstate', ()=>{
+    if(VOLVIENDO){ VOLVIENDO = false; return; }
+    const t = CAPAS.pop();
+    if(t === 'hoja'){ document.getElementById('modal').innerHTML=''; return; }
+    if(t === 'vista'){
+      const v = VISTAS.pop() || 'home';
+      ST.view = vistaPermitida(v) ? v : 'home';
+      /* al volver, ESTA pasa a ser la pantalla en la que estamos: si no,
+         el próximo paso adelante se anota mal y "atrás" queda desfasado */
+      ULTIMA_VISTA = ST.view;
+      VOLVIENDO = true; render(); VOLVIENDO = false;
+      return;
+    }
+    /* ya no queda nada abierto: recién acá se puede salir, y con dos
+       toques, para que no se vaya de la app sin querer */
+    if(Date.now() < SALIR_HASTA){ history.back(); return; }
+    SALIR_HASTA = Date.now() + 2500;
+    ponerCapa('salida');
+    toast('Tocá atrás otra vez para salir de ISIS');
+  });
+}
 function go(view, extra={}){
   if(!vistaPermitida(view)){ toast('No tenés acceso a esa pantalla'); view='home'; }
   Object.assign(ST, {view, ...extra}); closeSheet(); render();
@@ -1923,6 +2028,7 @@ function pantallaSinSucursal(){
         :`<div class="small muted">Pedile a la dueña que cargue el local desde Configuración.</div>`}
     </div></div>`;
 }
+let ULTIMA_VISTA = null;
 function render(){
   _OCU = null;
   /* si pasaron los minutos desde que alguien puso su PIN, el celular
@@ -1961,6 +2067,11 @@ function render(){
     ${suc ? (views[ST.view]||vHome)() : (ST.view==='config'?vConfig():pantallaSinSucursal())}
   `;
   document.getElementById('app').innerHTML = html + navHTML();
+  /* cambió de pantalla: queda un escalón para que "atrás" vuelva */
+  if(!VOLVIENDO && ST.view !== ULTIMA_VISTA){
+    if(ULTIMA_VISTA !== null){ VISTAS.push(ULTIMA_VISTA); ponerCapa('vista'); }
+    ULTIMA_VISTA = ST.view;
+  }
   window.scrollTo(0,0);
   /* la agenda del día arranca mostrando la hora actual, no las 9 de la mañana */
   if(ST.view==='agenda' && ST.fecha===hoy()){
@@ -8618,11 +8729,52 @@ mq.addEventListener('change', aplicarMQ);
    ============================================================ */
 load();
 migrar();
+/* de quién es ESTE celular. No viene de la base: es de este aparato. */
+apaCargar();
+if(pinPrendido()){
+  if(APA.modo==='persona' && byId(DB.usuarios, APA.usuarioId)){
+    ST.usuarioId = APA.usuarioId;
+    const u = byId(DB.usuarios, APA.usuarioId);
+    if(u.sucursalId) ST.sucursalId = u.sucursalId;
+  } else {
+    APA.modo = 'mostrador';
+    const m = usuarioMostrador();
+    APA.usuarioId = m.id; apaGuardar();
+    ST.usuarioId = m.id;
+    if(APA.sucursalId && byId(DB.sucursales, APA.sucursalId)) ST.sucursalId = APA.sucursalId;
+  }
+}
 save();
 aplicarMQ();
 ponerManifest();
-/* el aparato se acuerda de quién es antes de dibujar nada */
+engancharAtras();
 render();
+
+/* ============================================================
+   QUE EL CELULAR SE ENTERE DE QUE HAY UNA VERSIÓN NUEVA
+   El teléfono se guarda la página para que abra rápido aunque no
+   haya señal. El problema es que después sigue mostrando la vieja:
+   Julián actualizaba y no veía los cambios. Cada vez que se abre,
+   la app se fija sola si hay una más nueva y se recarga.
+   ============================================================ */
+const VERSION_ISIS = 7;
+async function mirarSiHayNueva(){
+  if(location.protocol === 'file:') return;
+  try{
+    const r = await fetch(location.pathname + '?v=' + Date.now(), {cache:'no-store'});
+    if(!r.ok) return;
+    const t = await r.text();
+    const m = t.match(/const VERSION_ISIS = (\d+)/);
+    if(m && +m[1] > VERSION_ISIS){
+      toast('Hay una versión nueva. Actualizando…');
+      setTimeout(()=>location.reload(true), 900);
+    }
+  }catch(e){}
+}
+setTimeout(mirarSiHayNueva, 2500);
+document.addEventListener('visibilitychange', ()=>{
+  if(!document.hidden) mirarSiHayNueva();
+});
 </script>
 </body>
 </html>
