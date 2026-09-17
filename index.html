@@ -101,6 +101,14 @@ label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:0 0
 .btns .btn{width:auto;flex:1;min-width:120px}
 
 /* ===== EL DÍA: el inicio es el trabajo, no un menú ===== */
+.vzgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:2px 0 13px}
+.vz{display:flex;flex-direction:column;align-items:flex-start;gap:2px;
+  background:var(--card);border:1px solid var(--line);border-radius:12px;
+  padding:9px 10px;text-align:left;min-height:62px;font:inherit;cursor:pointer}
+.vz.on{border-color:var(--pri);background:var(--freebg)}
+.vz b{font-size:13.5px;color:var(--ink);line-height:1.2}
+.vz span{font-size:11.5px;color:var(--muted);line-height:1.25}
+.vz i{font-style:normal;font-size:14px;font-weight:700;color:var(--ink);margin-top:1px}
 .ahorabox{background:var(--card);border:1px solid var(--line);border-radius:13px;
   box-shadow:var(--sh);overflow:hidden;margin-bottom:13px}
 .ahsep{padding:9px 13px 7px;font-size:11.5px;font-weight:700;letter-spacing:.07em;
@@ -372,6 +380,42 @@ label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:0 0
   justify-content:center;gap:8px;background:#8E1520;color:#fff;padding:11px 14px;
   font-size:13px;font-weight:700;border-bottom:2px solid #6B0F18}
 
+/* ---------- horarios ---------- */
+.semdia{display:flex;align-items:center;gap:11px;width:100%;background:none;border:0;
+  border-bottom:1px solid var(--line);padding:11px 2px;font:inherit;color:inherit;text-align:left;cursor:pointer}
+.semdia:last-child{border-bottom:0}
+.semdia:disabled{cursor:default}
+.sd1{flex:0 0 42px;font-size:13px;font-weight:700;color:var(--muted)}
+.sd2{flex:1;min-width:0}
+.sd2 b{display:block;font-size:14.5px}
+.sd2 span{display:block;font-size:12px;color:var(--muted)}
+.sd2 .nolab{font-size:13.5px;color:var(--faint)}
+.pillgrid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.pill.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+.avh{font-size:12.5px;line-height:1.45;padding:4px 0 4px 15px;position:relative}
+.avh:before{content:'';position:absolute;left:0;top:9px;width:8px;height:8px;border-radius:50%}
+.avh.rojo:before{background:var(--stop)}
+.avh.naranja:before{background:var(--warn)}
+.horwrap{overflow-x:auto;-webkit-overflow-scrolling:touch;background:var(--card);
+  border:1px solid var(--line);border-radius:13px}
+.hortab{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%}
+.hortab th,.hortab td{padding:0;font-size:11.5px}
+.hortab thead th{background:var(--card);font-size:11.5px;font-weight:700;color:var(--muted);
+  padding:9px 0;text-align:center;border-bottom:1.5px solid var(--line2);min-width:62px}
+.hortab th.hnom{position:sticky;left:0;background:var(--card);z-index:2;text-align:left;
+  padding:8px 10px;min-width:104px;max-width:104px;border-right:1px solid var(--line2)}
+.hortab tbody th.hnom{font-weight:600;font-size:12.5px;border-bottom:1px solid var(--line)}
+.hortab .lnk{background:none;border:0;padding:0;font:inherit;color:var(--acc);text-align:left;
+  cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:88px;display:block}
+.hortab td{text-align:center;border-bottom:1px solid var(--line);border-left:1px solid var(--line);
+  padding:6px 3px;vertical-align:middle;cursor:pointer;min-width:62px}
+.hortab td.hay{background:var(--freebg)}
+.hortab td.hay b{display:block;font-size:11.5px;font-weight:700;color:var(--freetx);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.hortab td.hay span{display:block;font-size:10px;color:var(--muted)}
+.hortab td.no i{color:var(--line2);font-style:normal;font-size:14px}
+.hortab td.choque{background:#FBE4E4;outline:1.5px solid var(--stop);outline-offset:-2px}
+
 /* ---------- la fila ---------- */
 .filacount{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:12px}
 .fc{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:13px 11px;text-align:center}
@@ -507,11 +551,19 @@ const money = n => '$'+Math.round(n).toLocaleString('es-AR');
 const TZ = 'America/Argentina/Buenos_Aires';
 /* AAAA-MM-DD a partir de los componentes LOCALES de la fecha, nunca UTC */
 const iso = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-const hoy = () => { try{ return new Date().toLocaleDateString('en-CA',{timeZone:TZ}); }
-                    catch(e){ return iso(new Date()); } };
-const horaAhora = () => { try{
-    return new Date().toLocaleTimeString('en-GB',{timeZone:TZ,hour:'2-digit',minute:'2-digit',hour12:false});
-  }catch(e){ const n=new Date(); return String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0'); } };
+let _HOY=null, _HOY_T=0, _HORA=null, _HORA_T=0;
+const hoy = () => {
+  const t = Date.now();
+  if(_HOY && t - _HOY_T < 20000) return _HOY;
+  _HOY_T = t;
+  try{ return _HOY = new Date().toLocaleDateString('en-CA',{timeZone:TZ}); }
+  catch(e){ return _HOY = iso(new Date()); } };
+const horaAhora = () => {
+  const t = Date.now();
+  if(_HORA && t - _HORA_T < 20000) return _HORA;
+  _HORA_T = t;
+  try{ return _HORA = new Date().toLocaleTimeString('en-GB',{timeZone:TZ,hour:'2-digit',minute:'2-digit',hour12:false});
+  }catch(e){ const n=new Date(); return _HORA = String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0'); } };
 const ahoraMin = () => mh(horaAhora());
 const parseISO = s => { const [y,m,d]=s.split('-').map(Number); return new Date(y,m-1,d); };
 const fechaLarga = s => { const d=parseISO(s);
@@ -535,6 +587,19 @@ function precioSegunMedio(contado, medio){
 /* ============================================================
    DATOS DE EJEMPLO
    ============================================================ */
+/* ============================================================
+   CON TURNO vs POR ORDEN DE LLEGADA
+   Hay trabajos que se agendan (cejas, pestañas, definitiva, masajes) y
+   hay trabajos donde la clienta llega y espera (depilación descartable,
+   manicuría, pedicuría, belleza de pies). No es lo mismo y no se anotan
+   en el mismo lado: los primeros van a la agenda, los segundos a la fila.
+   Mezclarlos era lo que hacía la agenda ilegible.
+   Ojo: un trabajo CON turno igual se puede atender sin turno si hay
+   lugar; eso se hace desde la fila, no desde acá.
+   ============================================================ */
+const AREAS_CON_TURNO = ['Cejas y pestañas','Ojos','Depilación definitiva',
+  'Masajes y tratamientos','Masajes','Tratamientos'];
+
 function seed(){
   const D = { cfg:{negocio:'ISIS', recargo:15, redondeo:500, diasSinVenir:60,
         permisos: JSON.parse(JSON.stringify(PERM_DEF))},
@@ -545,15 +610,24 @@ function seed(){
 
   /* sucursales */
   const S = [
-    {id:'su1', nombre:'Centro',   dir:'Calle 12 N° 850',   tel:'221 456-7890', activa:true},
-    {id:'su2', nombre:'Norte',    dir:'Av. 13 N° 2210',    tel:'221 456-7891', activa:true},
-    {id:'su3', nombre:'Shopping', dir:'Local 214, Nivel 2',tel:'221 456-7892', activa:true}
+    {id:'su1', nombre:'City Bell',  dir:'Cantilo 1234',      tel:'221 456-7890', activa:true},
+    {id:'su2', nombre:'Centro 54',  dir:'Calle 54 N° 850',   tel:'221 456-7891', activa:true},
+    {id:'su3', nombre:'Centro 45',  dir:'Calle 45 N° 620',   tel:'221 456-7892', activa:true},
+    {id:'su4', nombre:'Los Hornos', dir:'137 y 66',          tel:'221 456-7893', activa:true}
   ];
   D.sucursales = S;
 
   /* profesionales */
+  /* Un local solo no se cubre con una persona por área: si hay una sola,
+     la agenda queda de una columna y sin un hueco libre para dar un turno.
+     Con cuatro locales abiertos de 9 a 19.30 hace falta este equipo. */
   const nombres = ['Ana Pérez','Sofía Ramírez','Laura Gómez','Carla Díaz','Mariana Ruiz',
-                   'Julia Torres','Valentina Soto','Rocío Méndez','Belén Castro','Micaela Vega'];
+    'Julia Torres','Valentina Soto','Rocío Méndez','Belén Castro','Micaela Vega',
+    'Noelia Bravo','Paula Iriarte','Yanina Colombo','Andrea Pintos','Sabrina Luna',
+    'Daniela Ocampo','Verónica Sanz','Melina Ávila','Gisela Ponce','Carolina Real',
+    'Lucía Amaya','Natalia Ferrer','Brenda Casal','Silvina Moyano','Tamara Godoy',
+    'Jimena Arce','Ornella Bustos','Aldana Prieto','Cecilia Nardi','Malena Quinteros',
+    'Ivana Salcedo','Romina Bergara'];
   D.profesionales = nombres.map((n,i)=>({
     id:'pr'+(i+1), nombre:n, tel:'221 5'+(30+i)+'-'+(1000+i*137),
     activa:true, fijoMonto:0, fijoFrec:'mes', liqFrec:['semana','mes','semana','mes','quincena'][i%5],
@@ -562,24 +636,39 @@ function seed(){
   const P = D.profesionales;
 
   /* áreas por sucursal */
+  /* CON TURNO se agenda. POR ORDEN DE LLEGADA no: esa clienta entra a la
+     fila cuando llega y se la atiende cuando hay lugar. Son dos cosas
+     distintas y por eso la agenda no tiene que mostrar las de la fila. */
   const areaDefs = [
-    ['su1','Ojos','👁️','pr1'], ['su1','Manicuría','💅','pr3'], ['su1','Pedicuría','🦶','pr4'],
-    ['su1','Depilación','✨','pr5'],
-    ['su2','Ojos','👁️','pr2'], ['su2','Depilación','✨','pr6'], ['su2','Depilación definitiva','⚡','pr7'],
-    ['su3','Ojos','👁️','pr8'], ['su3','Manicuría','💅','pr9'], ['su3','Depilación definitiva','⚡','pr10']
+    ['su1','Cejas y pestañas','👁️','pr1'], ['su1','Depilación definitiva','⚡','pr2'],
+    ['su1','Masajes y tratamientos','💆','pr3'], ['su1','Depilación','✨','pr4'],
+    ['su1','Manicuría','💅','pr5'], ['su1','Pedicuría','🦶','pr6'],
+    ['su2','Cejas y pestañas','👁️','pr7'], ['su2','Depilación definitiva','⚡','pr8'],
+    ['su2','Depilación','✨','pr9'], ['su2','Manicuría','💅','pr10'], ['su2','Pedicuría','🦶','pr11'],
+    ['su3','Cejas y pestañas','👁️','pr12'], ['su3','Depilación','✨','pr13'],
+    ['su3','Manicuría','💅','pr14'], ['su3','Pedicuría','🦶','pr15'],
+    ['su4','Cejas y pestañas','👁️','pr16'], ['su4','Depilación','✨','pr17'],
+    ['su4','Manicuría','💅','pr18']
   ];
   D.areas = areaDefs.map((a,i)=>({id:'ar'+(i+1), sucursalId:a[0], nombre:a[1], icono:a[2],
-    supervisoraId:a[3], orden:i, activa:true}));
+    supervisoraId:a[3], orden:i, activa:true, porTurno: AREAS_CON_TURNO.includes(a[1])}));
 
   /* servicios por nombre de área */
   const svcByArea = {
-    'Ojos':[
+    'Cejas y pestañas':[
       ['Extensión pelo a pelo',120,120,0,0,1,38000,40],
       ['Volumen ruso',        150,150,0,0,1,45000,40],
       ['Lifting de pestañas',  60, 15,35,10,2,28000,40],
       ['Perfilado de cejas',   30, 30,0,0,1,15000,45],
+      ['Tinte de cejas',       30, 10,15,5,3,12000,45],
       ['Laminado de cejas',    60, 20,30,10,2,26000,40],
       ['Retoque de pestañas',  75, 75,0,0,1,26000,40]
+    ],
+    'Masajes y tratamientos':[
+      ['Masaje descontracturante',60,60,0,0,1,32000,40],
+      ['Masaje estético',      60, 60,0,0,1,30000,40],
+      ['Tratamiento facial',   75, 25,40,10,2,36000,40],
+      ['Tratamiento corporal', 90, 90,0,0,1,42000,40]
     ],
     'Manicuría':[
       ['Semipermanente',       60, 60,0,0,1,22000,45],
@@ -591,6 +680,7 @@ function seed(){
     ],
     'Pedicuría':[
       ['Pedicuría completa',   60, 60,0,0,1,20000,45],
+      ['Belleza de pies',      40, 40,0,0,1,15000,45],
       ['Semipermanente pies',  45, 45,0,0,1,18000,45],
       ['Spa de pies',          75, 25,40,10,2,26000,45]
     ],
@@ -617,34 +707,82 @@ function seed(){
   });
 
   /* asignaciones profesional -> área */
-  const asignDefs = [
-    ['pr1','ar1'],['pr2','ar1'],['pr8','ar1'],
-    ['pr3','ar2'],['pr9','ar2'],['pr4','ar2'],
-    ['pr4','ar3'],['pr10','ar3'],
-    ['pr5','ar4'],['pr6','ar4'],
-    ['pr2','ar5'],['pr1','ar5'],
-    ['pr6','ar6'],['pr5','ar6'],
-    ['pr7','ar7'],['pr10','ar7'],
-    ['pr8','ar8'],['pr2','ar8'],
-    ['pr9','ar9'],['pr3','ar9'],
-    ['pr10','ar10'],['pr7','ar10']
-  ];
+  /* Cada área tiene cuatro personas que la saben hacer. No trabajan las
+     cuatro el mismo día: eso lo reparte el cuadro de horarios de abajo.
+     Tener cuatro es lo que permite que siempre haya dos por día aunque
+     una falte o esté de vacaciones. */
+  const asignDefs = [];
+  (()=>{ let k = 0;
+    D.areas.forEach(ar=>{ for(let n=0;n<4;n++){ asignDefs.push([P[k % P.length].id, ar.id]); k++; } });
+  })();
   asignDefs.forEach(([p,a])=>{
     const svs = D.servicios.filter(s=>s.areaId===a).map(s=>s.id);
     D.asign.push({id:uid('as'), profId:p, areaId:a, servicios:svs, comision:null});
   });
 
-  /* horarios base: lun-vie + sábado corto, variando */
-  D.asign.forEach((as,i)=>{
-    const patrones = [
-      [[1,'09:00','17:00'],[2,'09:00','17:00'],[3,'12:00','20:00'],[4,'09:00','17:00'],[5,'09:00','17:00']],
-      [[1,'10:00','18:00'],[3,'10:00','18:00'],[4,'12:00','20:00'],[5,'10:00','18:00'],[6,'09:00','14:00']],
-      [[2,'09:00','15:00'],[3,'09:00','15:00'],[4,'09:00','15:00'],[5,'09:00','15:00']],
-      [[1,'12:00','20:00'],[2,'12:00','20:00'],[4,'12:00','20:00'],[5,'12:00','20:00'],[6,'10:00','15:00']]
-    ][i%4];
-    patrones.forEach(p=>D.horarios.push({id:uid('ho'), asignId:as.id, dia:p[0], desde:p[1], hasta:p[2],
-      pausaD:'13:00', pausaH:'14:00'}));
+  /* Horarios de ejemplo. IMPORTANTE: una profesional trabaja en UN SOLO
+     lugar por día, así que los días se reparten entre sus áreas en vez de
+     repetirse. Antes el ejemplo dejaba a casi todas en dos sucursales a la
+     misma hora, que es justo el error que el sistema ahora no deja hacer.
+     Se deja UN choque a propósito (Belén) para que se vea el aviso. */
+  /* HORARIOS DE EJEMPLO
+     Regla de oro: una profesional trabaja en UN SOLO lugar por día.
+     Con eso, lo que hay que repartir son personas-día entre áreas-día.
+     Se recorre día por día y se le da a cada área la profesional suya que
+     menos días tenga cargados y esté libre ese día: así queda parejo y
+     todas las áreas quedan cubiertas. */
+  /* Las tandas son de 6 horas, que es como se fracciona el turno acá.
+     La primera persona del área entra a la mañana y la segunda al mediodía:
+     así el área queda cubierta de 9 a 19.30 y la agenda tiene DOS columnas
+     con huecos de verdad, que es lo que hace falta para dar un turno. */
+  const TANDAS = [['09:00','15:00'], ['13:30','19:30'], ['10:00','16:00']];
+  const tomado = {}, carga = {};
+  const seLibra = (pid,d) => !tomado[pid+'|'+d];
+  /* cuánta gente necesita cada área por día */
+  const cupoDe = (ar, d) => d===6 ? 1
+    : ar.porTurno ? 2 : (ar.nombre==='Depilación' ? 2 : 1);
+  /* Se reparte POR RONDAS: primero una persona a cada área, recién después
+     la segunda. Si se hiciera área por área, el último local se quedaba sin
+     nadie porque la gente ya estaba tomada. */
+  [1,2,3,4,5,6].forEach((d, di)=>{
+    for(let n=0; n<2; n++){
+      D.areas.forEach((ar, ai)=>{
+        if(d===6 && ai%5===0) return;                  /* algunas áreas no abren sábado */
+        if(n >= cupoDe(ar, d)) return;
+        const suyas = D.asign.filter(a=>a.areaId===ar.id && seLibra(a.profId, d));
+        if(!suyas.length) return;
+        suyas.sort((x,y)=>(carga[x.profId]||0)-(carga[y.profId]||0));
+        const as = suyas[0];
+        tomado[as.profId+'|'+d] = true;
+        carga[as.profId] = (carga[as.profId]||0)+1;
+        /* la primera entra a la mañana, la segunda al mediodía: el área
+           queda cubierta de punta a punta */
+        const t = n===0 ? TANDAS[(ai+di)%2===0 ? 0 : 2] : TANDAS[1];
+        D.horarios.push({id:uid('ho'), asignId:as.id, dia:d, desde:t[0], hasta:t[1],
+          pausaD:null, pausaH:null});
+      });
+    }
   });
+  /* UN choque a propósito, para que el aviso tenga algo que mostrar el
+     primer día. Es el error que más se comete: la misma persona anotada
+     en dos locales el mismo día. */
+  (()=>{
+    const sucDe = as => (byId(D.areas, as.areaId)||{}).sucursalId;
+    for(const p of D.profesionales){
+      const suyas = D.asign.filter(a=>a.profId===p.id);
+      if(suyas.length<2) continue;
+      for(const d of [1,2,3,4,5]){
+        const hoy = D.horarios.filter(h=>h.dia===d && suyas.some(a=>a.id===h.asignId));
+        if(hoy.length!==1) continue;
+        const usada = byId(D.asign, hoy[0].asignId);
+        const otra = suyas.find(a=>a.id!==usada.id && sucDe(a)!==sucDe(usada));
+        if(!otra) continue;
+        D.horarios.push({id:uid('ho'), asignId:otra.id, dia:d, desde:'13:30', hasta:'19:30',
+          pausaD:null, pausaH:null});
+        return;
+      }
+    }
+  })();
 
   /* clientas */
   const cl = [
@@ -743,7 +881,7 @@ function seed(){
      adentro atendiéndose, y un montón por venir. */
   const ahoraReal = (()=>{ const d=new Date(); return d.getHours()*60+d.getMinutes(); })();
   const ahora = Math.min(Math.max(ahoraReal, 11*60), 15*60);
-  const USUARIOS_CAJA = ['Vanesa Ledesma','Vanesa Ledesma','Nadia Ferrari'];
+  const USUARIOS_CAJA = ['Vanesa Ledesma','Vanesa Ledesma','Nadia Ferrari','Nadia Ferrari'];
   const MEDIO_POND = ['efectivo','efectivo','efectivo','efectivo','efectivo',
     'transfer','transfer','debito','credito','mp'];
   const conRec = m => (MEDIOS.find(x=>x.k===m)||{}).rec;
@@ -759,11 +897,15 @@ function seed(){
       const area = byId(D.areas, as.areaId);
       const svs = D.servicios.filter(x=>x.areaId===as.areaId && x.activo);
       if(!svs.length) return;
-      const finTurno = mh(ho.hasta), pd = mh(ho.pausaD), ph = mh(ho.pausaH);
+      const finTurno = mh(ho.hasta);
+      /* ya no se carga el almuerzo: el turno entero está disponible */
+      const pd = ho.pausaD ? mh(ho.pausaD) : -1, ph = ho.pausaH ? mh(ho.pausaH) : -1;
       /* qué tan lleno está: lo de atrás y lo de hoy, a tope; lo de más
          adelante se va vaciando, como pasa de verdad */
-      const hueco = dd < 0 ? 0.30 : dd === 0 ? 0.10
-                  : dd <= 4 ? 0.20 : dd <= 7 ? 0.45 : 0.65;
+      /* el día tiene que verse lleno PERO con lugar: si no queda ningún
+         hueco, la recepcionista no puede mostrar dónde dar un turno */
+      const hueco = dd < 0 ? 0.30 : dd === 0 ? 0.28
+                  : dd <= 4 ? 0.34 : dd <= 7 ? 0.48 : 0.65;
       let t = mh(ho.desde);
       while(t < finTurno - 20){
         if(t >= pd && t < ph){ t = ph; continue; }
@@ -791,7 +933,7 @@ function seed(){
           lineas:[{ id:uid('ln'), servicioId:sv.id, profId:as.profId, areaId:as.areaId,
             hora: hm(t), dur: sv.dur, estado, precio: sv.contado, descuento: desc,
             comisionPct: sv.comision, exenta:false, motivo: estado==='can'?'La clienta avisó':'' }],
-          pagos:[] };
+          pagos:[], sinTurno: !area.porTurno };
 
         /* lo que se terminó, se cobró */
         if(estado === 'fin'){
@@ -800,7 +942,7 @@ function seed(){
           const imp = conRec(medio) ? lista(base) : base;
           v.pagos.push({id:uid('pa'), importe:imp, contado:base, medio, tipo:'total',
             fecha:f, hora:hm(Math.min(finTurno, t+sv.dur+5)),
-            usuario: USUARIOS_CAJA[['su1','su2','su3'].indexOf(area.sucursalId)] || 'Vanesa Ledesma',
+            usuario: USUARIOS_CAJA[D.sucursales.findIndex(x=>x.id===area.sucursalId)] || 'Vanesa Ledesma',
             anulado:null});
         }
         /* algunas de adelante dejan seña */
@@ -816,6 +958,70 @@ function seed(){
   }
   D.visitas = visitas;
 
+  /* ---- LA FILA DE HOY ----
+     Lo que se atiende por orden de llegada no está en la agenda: está acá.
+     La recepcionista anota a la clienta cuando llega, con el número de
+     tiquera que le da la profesional, y marca en qué está.
+     Para que el ejemplo se vea como un día real, la fila arranca con lo
+     que ya se atendió hoy, lo que se está atendiendo ahora mismo, y unas
+     cuantas esperando. */
+  D.fila = [];
+  let tiq = 4100;
+  const CAJERA = sid => USUARIOS_CAJA[D.sucursales.findIndex(x=>x.id===sid)] || 'Vanesa Ledesma';
+  D.visitas.filter(v=>v.fecha===H && v.sinTurno).forEach(v=>{
+    const l = v.lineas[0];
+    const est = l.estado==='fin' ? 'fin' : l.estado==='serv' ? 'at'
+              : l.estado==='no' ? 'fue' : null;
+    if(!est) return;
+    D.fila.push({id:uid('fl'), sucursalId:v.sucursalId, fecha:H, clientaId:v.clientaId,
+      servicioId:l.servicioId, areaId:l.areaId, profPedida:null,
+      llegada: hm(Math.max(0, mh(l.hora) - 5 - Math.floor(rnd()*20))),
+      estado:est, visitaId:v.id, profId:l.profId,
+      desde:l.hora, hasta: est==='fin' ? hm(mh(l.hora)+l.dur) : null,
+      tiquera:String(tiq++), usuario:CAJERA(v.sucursalId), ts:Date.now()});
+  });
+  /* quiénes están hoy en cada área: pedir por alguien que hoy no vino no
+     tiene sentido, y en la pantalla queda como un error */
+  const hoyEn = ar => {
+    const dow = parseISO(H).getDay();
+    return D.asign.filter(a=>a.areaId===ar.id)
+      .filter(a=>D.horarios.some(h=>h.asignId===a.id && h.dia===dow))
+      .filter(a=>!noTrabaja(a.profId, H));
+  };
+  /* en cada local tiene que haber alguien atendiéndose: si no, la pantalla
+     de la recepcionista arranca vacía y no se entiende para qué sirve */
+  D.sucursales.forEach(su=>{
+    if(D.fila.some(f=>f.sucursalId===su.id && f.estado==='at')) return;
+    const ar = D.areas.find(a=>a.sucursalId===su.id && !a.porTurno && hoyEn(a).length);
+    if(!ar) return;
+    const svs = D.servicios.filter(x=>x.areaId===ar.id && x.activo);
+    const as = hoyEn(ar)[0];
+    D.fila.push({id:uid('fl'), sucursalId:su.id, fecha:H, clientaId:elegir(CLI),
+      servicioId:elegir(svs).id, areaId:ar.id, profPedida:null,
+      llegada: hm(Math.max(540, ahora-25)), estado:'at', visitaId:null, profId:as.profId,
+      desde: hm(Math.max(540, ahora-15)), hasta:null, tiquera:String(tiq++),
+      usuario:CAJERA(su.id), ts:Date.now()});
+  });
+  /* las que están esperando en este momento */
+  D.areas.filter(a=>!a.porTurno).forEach(ar=>{
+    const svs = D.servicios.filter(x=>x.areaId===ar.id && x.activo);
+    const suyas = hoyEn(ar);
+    if(!svs.length) return;
+    const cuantas = 1 + Math.floor(rnd()*3);
+    for(let k=0;k<cuantas;k++){
+      /* muchas clientas piden por una profesional y la esperan. Se pide
+         solo por alguien que HOY esté trabajando en esa área. */
+      const pedida = (chance(.35) && suyas.length) ? elegir(suyas).profId : null;
+      D.fila.push({id:uid('fl'), sucursalId:ar.sucursalId, fecha:H, clientaId:elegir(CLI),
+        servicioId:elegir(svs).id, areaId:ar.id, profPedida: pedida,
+        llegada: hm(Math.max(540, ahora - 3 - Math.floor(rnd()*40))),
+        estado:'esp', visitaId:null, profId:null, desde:null, hasta:null,
+        tiquera: chance(.8) ? String(tiq++) : '',
+        usuario:CAJERA(ar.sucursalId), ts:Date.now()});
+    }
+  });
+  D.fila.sort((a,b)=> a.llegada<b.llegada?-1:1);
+
   /* ---- lista de espera ---- */
   const A1 = svAr('ar1'), A2 = svAr('ar2');
   D.espera = [
@@ -830,7 +1036,7 @@ function seed(){
   const GASTOS = [['Insumos de manicuría',18500],['Descartables',9500],['Limpieza',7000],
     ['Café y agua',6500],['Insumos de pestañas',24000],['Toallas',12000],
     ['Delivery de insumos',5000],['Mantenimiento equipo',32000]];
-  ['su1','su2','su3'].forEach((sid, si)=>{
+  D.sucursales.map(x=>x.id).forEach((sid, si)=>{
     const quien = USUARIOS_CAJA[si];
     for(let dd=-14; dd<=0; dd++){
       const f = addDays(H, dd);
@@ -956,6 +1162,14 @@ function migrar(){
   if(!DB.cfg.paso)   DB.cfg.paso = 30;
   if(!DB.cfg.abre)   DB.cfg.abre = '09:00';
   if(!DB.cfg.cierra) DB.cfg.cierra = '19:30';
+  /* v5: el almuerzo sale del sistema. Lo hacen cuando tienen libre y lo
+     manejan con la cajera; tenerlo cargado bloqueaba media hora al pedo. */
+  if(DB.cfg.v < 5){ DB.horarios.forEach(h=>{ h.pausaD=null; h.pausaH=null; }); DB.cfg.v = 5; }
+  /* las áreas que ya estaban cargadas no sabían si se agendan o no */
+  if(DB.cfg.v < 6){
+    (DB.areas||[]).forEach(a=>{ if(a.porTurno===undefined) a.porTurno = AREAS_CON_TURNO.includes(a.nombre); });
+    DB.cfg.v = 6;
+  }
   /* volver a entrar como la última vez que se usó este aparato */
   if(DB.cfg.ultimoUsuario && byId(DB.usuarios, DB.cfg.ultimoUsuario)){
     ST.usuarioId = DB.cfg.ultimoUsuario;
@@ -970,6 +1184,8 @@ function migrar(){
 }
 let SIN_ESPACIO = false;
 function save(){
+  olvidarProfesDelDia();
+  _OCU = null;   /* cambió la fila: quién está ocupada se vuelve a mirar */
   MEM = DB;
   try{
     localStorage.setItem('isis_db', JSON.stringify(DB));
@@ -1107,6 +1323,11 @@ const suComision = l => puedeVerComisiones() ||
    Recepción y la supervisora quedan clavadas en la suya, y la profesional también
    (antes 'prop' se colaba por la negación y le aparecían las tres sucursales). */
 const puedeCambiarSucursal  = () => perm('agenda')==='todo';
+/* ¿puedo pararme en este local? La dueña y la admin, en cualquiera.
+   La profesional también, pero solo porque de ese local no ve más que
+   sus propios turnos: es la única manera de que encuentre los suyos
+   cuando trabaja en dos lugares distintos de la semana. */
+const puedeVerSucursal = sid => puedeCambiarSucursal() || perm('agenda')==='prop';
 const puedeVerEquipo   = () => perm('equipo')!=='no';
 const puedeEditarEquipo= () => perm('equipo')==='todo';
 const puedeFichar      = () => ['todo','suc','area','ver','prop'].includes(perm('equipo'));
@@ -1133,7 +1354,8 @@ const VISTA_OK = {
   home:()=>true,
   agenda:puedeVerAgenda, clientas:puedeVerClientas, ficha:puedeVerClientas,
   equipo:puedeVerEquipo, caja:puedeCobrar, vouchers:puedeCobrar,
-  espera:puedeEditarAgenda, fila:puedeVerAgenda, comisiones:puedeVerComisiones,
+  espera:puedeEditarAgenda, fila:puedeVerAgenda, horarios:puedeVerEquipo,
+  comisiones:puedeVerComisiones,
   reportes:puedeVerReportes,
   config:puedeConfig, servicios:puedeConfig, areas:puedeConfig, usuarios:puedeConfig,
   precios:()=>true
@@ -1264,9 +1486,13 @@ function profesDe(areaId, servicioId){
   return DB.asign.filter(a=>a.areaId===areaId && (!servicioId || a.servicios.includes(servicioId)))
     .map(a=>byId(DB.profesionales, a.profId)).filter(p=>p && p.activa);
 }
+let _PDD = {};
 function profesDelDia(areaId, fecha){
-  return profesDe(areaId).filter(p=>horarioDe(p.id, areaId, fecha));
+  const k = areaId+'|'+fecha;
+  if(_PDD[k]) return _PDD[k];
+  return _PDD[k] = profesDe(areaId).filter(p=>horarioDe(p.id, areaId, fecha));
 }
+function olvidarProfesDelDia(){ _PDD = {}; }
 
 
 /* ============================================================
@@ -1632,6 +1858,7 @@ function pantallaSinSucursal(){
     </div></div>`;
 }
 function render(){
+  _OCU = null;
   /* El portón: con el login prendido no se ve NADA hasta entrar. */
   if(loginHaceFalta()){
     document.getElementById('app').innerHTML = pantallaLogin();
@@ -1648,11 +1875,12 @@ function render(){
   const views = {home:vHome, agenda:vAgenda, clientas:vClientas, ficha:vFicha,
     equipo:vEquipo, caja:vCaja, config:vConfig, servicios:vServicios, areas:vAreas,
     comisiones:vComisiones, reportes:vReportes, espera:vEspera, vouchers:vVouchers, fila:vFila,
+    horarios:vHorarios,
     usuarios:vUsuarios, precios:vPrecios};
   const titulos = {home:DB.cfg.negocio, agenda:'Agenda', clientas:'Clientas', ficha:'Clienta',
     equipo:'Equipo', caja:'Caja', config:'Configuración', servicios:'Servicios', areas:'Áreas',
     comisiones:'Comisiones', reportes:'Reportes', espera:'Avisar cuando haya lugar',
-    vouchers:'Vouchers', fila:'La fila',
+    vouchers:'Vouchers', fila:'La fila', horarios:'Horarios de la semana',
     usuarios:'Usuarios', precios:'Precios'};
   const back = !['home','agenda','clientas','equipo','caja'].includes(ST.view);
 
@@ -2162,7 +2390,8 @@ const FILA_EST = {esp:'Esperando', at:'Atendiéndose', fin:'Terminada', fue:'Se 
 
 function filaDeHoy(sid){
   sid = sid || ST.sucursalId;
-  return (DB.fila||[]).filter(f=>f.fecha===hoy() && f.sucursalId===sid);
+  const h = hoy();
+  return (DB.fila||[]).filter(f=>f.fecha===h && f.sucursalId===sid);
 }
 const esperando   = sid => filaDeHoy(sid).filter(f=>f.estado==='esp');
 const atendiendose= sid => filaDeHoy(sid).filter(f=>f.estado==='at');
@@ -2406,7 +2635,9 @@ function guardarTiquera(fid){
    está esperando a alguien ocupado se ve en gris y dice por qué.
    ============================================================ */
 /* está atendiendo a alguien ahora mismo */
-const profOcupada = pid => atendiendose().some(x=>x.profId===pid);
+let _OCU = null;
+const ocupadasAhora = () => _OCU || (_OCU = new Set(atendiendose().map(x=>x.profId)));
+const profOcupada = pid => ocupadasAhora().has(pid);
 
 /* quiénes podrían atender a esta clienta hoy */
 function profesPosibles(f){
@@ -2505,9 +2736,10 @@ function vFila(){
 
     ${areas.length>1?`<div class="subtabs" style="padding:0 0 11px">
       <button class="ptab ${!filtro?'on':''}" onclick="ST.filaArea=null;render()">Todas</button>
-      ${areas.map(a=>{const n=filaDeHoy().filter(f=>(f.estado==='esp'||f.estado==='at')&&f.areaId===a.id).length;
+      ${(()=>{const vivas=filaDeHoy().filter(f=>f.estado==='esp'||f.estado==='at');
+        return areas.map(a=>{const n=vivas.filter(f=>f.areaId===a.id).length;
         return `<button class="ptab ${filtro===a.id?'on':''}" onclick="ST.filaArea='${a.id}';render()">
-          ${a.icono} ${esc(a.nombre)}${n?' · '+n:''}</button>`;}).join('')}
+          ${a.icono} ${esc(a.nombre)}${n?' · '+n:''}</button>`;}).join('');})()}
     </div>`:''}
 
     <div class="h3">Esperando</div>
@@ -2677,8 +2909,10 @@ function clientasVisibles(){
   return DB.clientas.filter(c=>ids.has(c.id));
 }
 function vAgenda(){
-  const areas = areasDeSucursal();
-  if(!areas.length) return `<div class="empty">Esta sucursal todavía no tiene áreas cargadas.</div>`;
+  /* Solo lo que se da con turno. Manicuría, pedicuría y depilación
+     descartable son por orden de llegada: van en la Fila, no acá. */
+  const areas = areasDeSucursal().filter(a=>a.porTurno!==false);
+  if(!areas.length) return `<div class="empty">En esta sucursal no hay nada que se dé con turno.<br><span class="small muted">Manicuría, pedicuría y depilación se atienden por orden de llegada, desde la Fila.</span></div>`;
   const verDia = puedeVerDiaCompleto();
   /* si no tiene permiso de ver la sucursal entera, nunca queda parado en esa vista */
   if(ST.areaId==='__dia' && !verDia) ST.areaId = null;
@@ -2724,7 +2958,7 @@ function vAgenda(){
 
 /* --- vista TODO EL DÍA de la sucursal (recepción): todas las áreas juntas, por hora --- */
 function agendaDia(){
-  const ids = DB.areas.filter(a=>a.sucursalId===ST.sucursalId && a.activa).map(a=>a.id);
+  const ids = DB.areas.filter(a=>a.sucursalId===ST.sucursalId && a.activa && a.porTurno!==false).map(a=>a.id);
   const ls = lineasDe(ST.fecha, (l,v)=> v.sucursalId===ST.sucursalId && ids.includes(l.areaId))
     .sort((a,b)=> mh(a.hora)-mh(b.hora) || (a.areaId<b.areaId?-1:1));
   if(!ls.length) return `<div class="empty">No hay turnos cargados este día en la sucursal.</div>`;
@@ -3612,14 +3846,16 @@ function sucursalesDeUnVistazo(){
       <b style="color:var(--ink)">${esc(su.nombre)}</b> · ${esc(su.dir)}</div>`:'';
   }
   const ver = puedeVerPrecios();
-  return `<div class="listcard" style="margin-bottom:13px">
-    <div class="ahsep">Hoy en las sucursales</div>
+  /* Con cuatro locales, un renglón por local empujaba el trabajo del día
+     casi media pantalla para abajo. De a dos por fila entran los cuatro
+     en el mismo alto que entraban dos, y se sigue viendo todo de un saque. */
+  return `<div class="vzgrid">
     ${sucs.map(su=>{ const r=resumenSucursal(su.id); const on = su.id===ST.sucursalId;
-      return `<button class="lr" style="${on?'background:var(--freebg)':''}"
+      return `<button class="vz ${on?'on':''}"
         onclick="ST.sucursalId='${su.id}';ST.areaId=null;ST.diaTodo=false;save();render()">
-        <div class="g"><b>${esc(su.nombre)}${on?' <span class="bd ok">Mirando</span>':''}</b>
-          <span>${r.turnos} turno${r.turnos===1?'':'s'} · ${r.local} en el local${r.deben?' · '+r.deben+' por cobrar':''}</span></div>
-        ${ver?`<div class="r"><b style="font-size:14px;color:var(--ink)">${money(r.cobrado)}</b></div>`:''}
+        <b>${esc(su.nombre)}</b>
+        <span>${r.turnos} turno${r.turnos===1?'':'s'} · ${r.local} acá${r.deben?' · '+r.deben+' debe'+(r.deben===1?'':'n'):''}</span>
+        ${ver?`<i>${money(r.cobrado)}</i>`:''}
       </button>`;}).join('')}
   </div>`;
 }
@@ -3840,10 +4076,10 @@ function tomarHueco(aid, sid, fecha, hora, pid){
    supervisora solo sus areas.
    ============================================================ */
 function turnoVisibleEnAgenda(l, v){
-  if(v.sucursalId!==ST.sucursalId) return false;
   const p = perm('agenda');
   if(p==='no') return false;
   if(p==='prop'){ const u=usuario(); return !!u && l.profId===u.profId; }
+  if(v.sucursalId!==ST.sucursalId) return false;
   if(p==='area') return areasDeUsuario().includes(l.areaId);
   return true;
 }
@@ -3898,6 +4134,10 @@ function irAlTurno(vid, lid){
   const v = byId(DB.visitas, vid); if(!v) return;
   const l = byId(v.lineas, lid); if(!l) return;
   ST.view='agenda'; ST.fecha=v.fecha; ST.areaId=l.areaId; ST.profTab=l.profId;
+  /* si el turno es en otro local, la agenda se muda sola: si no, se abre
+     una pantalla vacía y parece que el turno no existe */
+  if(v.sucursalId && v.sucursalId!==ST.sucursalId && puedeVerSucursal(v.sucursalId))
+    ST.sucursalId = v.sucursalId;
   closeSheet(); render();
   setTimeout(()=>abrirTurno(vid,lid), 60);
 }
@@ -4326,9 +4566,314 @@ function vEquipo(){
       ${tabs.map(t=>`<button class="tab ${ST.eqTab===t[0]?'on':''}"
         onclick="ST.eqTab='${t[0]}';render()">${t[1]}</button>`).join('')}
     </div>
+    ${['todo','area','suc'].includes(perm('equipo'))?`<div class="pad" style="padding-bottom:0">
+      <button class="btn sec" onclick="go('horarios')">${ic('clock','sm')} Horarios de la semana · todos los locales</button>
+    </div>`:''}
     ${ST.eqTab==='hoy'?eqHoy():ST.eqTab==='semana'?eqSemana():eqPersonal()}`;
 }
 /* profesionales que trabajan en alguna área de la sucursal elegida */
+
+/* ============================================================
+   LOS HORARIOS
+
+   Antes el horario colgaba del ÁREA: una persona en tres áreas
+   tenía tres horarios sueltos y nadie los comparaba. Así quedó
+   cargada gente en dos sucursales a la misma hora del mismo día.
+
+   Ahora manda la persona: una pantalla con su semana, y cada día
+   con su horario y su local. Como una profesional trabaja en un
+   solo lugar por día, al cargar un día se lo saca de cualquier
+   otro: no se puede pisar.
+
+   Abajo sigue guardándose igual que siempre, así que la agenda
+   no se entera de nada.
+   ============================================================ */
+const DIAS_ORD = [1,2,3,4,5,6,0];
+
+/* Los Hornos → LH · Centro 54 → C54 · City Bell → CB */
+function sucCorta(nombre){
+  const n = String(nombre||'').trim();
+  const num = n.match(/\d+/);
+  const letras = n.replace(/\d+/g,'').split(/\s+/).filter(Boolean)
+    .map(w=>w[0]).join('').toUpperCase().slice(0,2);
+  return letras + (num?num[0]:'');
+}
+
+/* la semana de una persona, juntando todas sus áreas */
+function semanaDe(pid){
+  const asgs = DB.asign.filter(a=>a.profId===pid);
+  const out = {};
+  DIAS_ORD.forEach(d=>{
+    out[d] = DB.horarios.filter(h=>h.dia===d && asgs.some(a=>a.id===h.asignId))
+      .map(h=>{ const as=byId(DB.asign,h.asignId), ar=as?byId(DB.areas,as.areaId):null;
+        return {h, as, area:ar, suc:ar?byId(DB.sucursales,ar.sucursalId):null}; })
+      .filter(x=>x.area);
+  });
+  return out;
+}
+/* ¿quedó en dos lugares el mismo día? */
+function diasChocados(pid){
+  const sem = semanaDe(pid), out=[];
+  DIAS_ORD.forEach(d=>{
+    const ss = [...new Set(sem[d].map(x=>x.suc?x.suc.id:''))];
+    if(sem[d].length>1 && ss.length>1) out.push(d);
+  });
+  return out;
+}
+
+/* ---- guardar un día: se lo saca de todos lados y se pone en uno ---- */
+function ponerDiaSemana(pid, dia, desde, hasta, areaId){
+  if(!puedeTocarHorarioDe(pid)){ toast('Solo podés cambiarle el horario a la gente de tu área'); return false; }
+  const asgs = DB.asign.filter(a=>a.profId===pid);
+  DB.horarios = DB.horarios.filter(h=>!(h.dia===dia && asgs.some(a=>a.id===h.asignId)));
+  if(desde && hasta && areaId){
+    let as = asgs.find(a=>a.areaId===areaId);
+    if(!as){
+      as = {id:uid('as'), profId:pid, areaId,
+        servicios: DB.servicios.filter(x=>x.areaId===areaId && x.activo).map(x=>x.id), comision:null};
+      DB.asign.push(as);
+    }
+    DB.horarios.push({id:uid('ho'), asignId:as.id, dia, desde, hasta, pausaD:null, pausaH:null});
+  }
+  save();
+  return true;
+}
+
+/* ---- LA SEMANA DE UNA PERSONA ---- */
+function suSemana(pid){
+  const p = byId(DB.profesionales, pid);
+  const sem = semanaDe(pid);
+  const choc = diasChocados(pid);
+  const puede = puedeTocarHorarioDe(pid);
+  const cargados = DIAS_ORD.filter(d=>sem[d].length).length;
+  sheet('La semana de '+p.nombre.split(' ')[0], `
+    <div class="small muted" style="margin-bottom:11px">Trabaja ${cargados} ${cargados===1?'día':'días'} por semana.
+      Una profesional trabaja en un solo lugar por día.</div>
+    ${choc.length?`<div class="warnbox">${ic('alert','sm')} <b>Está en dos locales el mismo día</b>
+      (${choc.map(d=>DIAS[d]).join(', ')}). Tocá ese día y elegí uno solo.</div>`:''}
+    <div class="card cardp" style="padding:4px 8px">
+      ${DIAS_ORD.map(d=>{
+        const hs = sem[d];
+        return `<button class="semdia" ${puede?`onclick="SEMD={};editarDiaSemana('${pid}',${d})"`:'disabled'}>
+          <div class="sd1">${DIAS[d].slice(0,3)}</div>
+          <div class="sd2">${hs.length?hs.map(x=>`
+            <div><b>${x.h.desde} a ${x.h.hasta}</b>
+              <span>${x.suc?esc(x.suc.nombre):''} · ${x.area.icono} ${esc(x.area.nombre)}</span></div>`).join('')
+            :`<div class="nolab">no trabaja</div>`}</div>
+          ${puede?ic('chev','sm'):''}</button>`;}).join('')}
+    </div>
+    ${puede?`<div class="btns" style="margin-top:11px">
+      <button class="btn sec" onclick="copiarSemana('${pid}')">${ic('list','sm')} Copiar un día al resto</button>
+    </div>`:''}`);
+}
+
+function editarDiaSemana(pid, dia){
+  const p = byId(DB.profesionales, pid);
+  const sem = semanaDe(pid)[dia];
+  const actual = sem[0] || null;
+  const frec = horariosFrecuentes();
+  /* todas las áreas de todos los locales: puede empezar en un local nuevo */
+  const areas = DB.areas.filter(a=>a.activa)
+    .sort((x,y)=>(byId(DB.sucursales,x.sucursalId)||{}).nombre?.localeCompare((byId(DB.sucursales,y.sucursalId)||{}).nombre||'')||0);
+  if(!SEMD.areaId) SEMD.areaId = actual ? actual.area.id : (areas[0]||{}).id;
+  if(!SEMD.desde){ SEMD.desde = actual?actual.h.desde:''; SEMD.hasta = actual?actual.h.hasta:''; }
+  const sel = byId(DB.areas, SEMD.areaId);
+  const selSuc = sel?byId(DB.sucursales, sel.sucursalId):null;
+  sheet(DIAS[dia]+' de '+p.nombre.split(' ')[0], `
+    <div class="${actual?'okbox':'infobox'}" style="margin-bottom:12px">
+      ${actual?`Hoy tiene cargado <b>${actual.h.desde} a ${actual.h.hasta}</b> en ${esc(actual.suc?actual.suc.nombre:'')}`
+        :`Los ${DIAS[dia].toLowerCase()} <b>no trabaja</b>.`}
+    </div>
+
+    <div class="h3" style="margin-top:0">¿Qué horario?</div>
+    <div class="pillgrid">
+      ${frec.map(([a,b])=>`<button class="pill ${(SEMD.desde===a&&SEMD.hasta===b)?'on':''}"
+        onclick="SEMD.desde='${a}';SEMD.hasta='${b}';editarDiaSemana('${pid}',${dia})">${a} a ${b}</button>`).join('')}
+      <button class="pill" style="color:var(--acc);font-weight:700"
+        onclick="horarioSemanaAMano('${pid}',${dia})">Otro horario…</button>
+    </div>
+    ${(SEMD.desde&&!frec.some(([a,b])=>a===SEMD.desde&&b===SEMD.hasta))?`
+      <div class="okbox" style="margin-top:9px">Elegido: <b>${SEMD.desde} a ${SEMD.hasta}</b></div>`:''}
+
+    <div class="h3">¿Dónde?</div>
+    <div class="pillgrid">
+      ${areas.map(a=>{const su=byId(DB.sucursales,a.sucursalId);
+        return `<button class="pill ${a.id===SEMD.areaId?'on':''}"
+          onclick="SEMD.areaId='${a.id}';editarDiaSemana('${pid}',${dia})">
+          ${esc(su?sucCorta(su.nombre):'')} · ${a.icono} ${esc(a.nombre)}</button>`;}).join('')}
+    </div>
+
+    <button class="btn" style="margin-top:14px" onclick="guardarDiaSemana('${pid}',${dia})">
+      Guardar${(SEMD.desde&&selSuc)?' · '+SEMD.desde+' a '+SEMD.hasta+' en '+esc(selSuc.nombre):''}</button>
+    ${actual?`<button class="btn dan" style="margin-top:8px" onclick="sacarDiaSemana('${pid}',${dia})">
+      ${ic('x','sm')} Los ${DIAS[dia].toLowerCase()} no trabaja</button>`:''}
+    <button class="btn sec" style="margin-top:8px" onclick="SEMD={};suSemana('${pid}')">Volver</button>`);
+}
+let SEMD = {};
+function horarioSemanaAMano(pid, dia){
+  sheet('Otro horario', `
+    <div class="small muted" style="margin-bottom:11px">Los turnos suelen ser de 6 horas,
+      pero podés poner el que necesites.</div>
+    <div class="row f">
+      <div><label>Desde</label><input type="time" id="smd" value="${SEMD.desde||'09:00'}"></div>
+      <div><label>Hasta</label><input type="time" id="smh" value="${SEMD.hasta||'15:00'}"></div>
+    </div>
+    <button class="btn" onclick="(function(){
+      const a=document.getElementById('smd').value, b=document.getElementById('smh').value;
+      if(!a||!b||mh(b)<=mh(a)){ toast('Revisá el horario'); return; }
+      SEMD.desde=a; SEMD.hasta=b; editarDiaSemana('${pid}',${dia});})()">Usar este horario</button>`);
+}
+function guardarDiaSemana(pid, dia){
+  if(!SEMD.desde||!SEMD.hasta){ toast('Elegí el horario'); return; }
+  if(!SEMD.areaId){ toast('Elegí dónde trabaja'); return; }
+  const antes = semanaDe(pid)[dia];
+  const areaNueva = byId(DB.areas, SEMD.areaId);
+  const sucNueva = byId(DB.sucursales, areaNueva.sucursalId);
+  const mudanza = antes.filter(x=>x.area.id!==SEMD.areaId);
+  if(!ponerDiaSemana(pid, dia, SEMD.desde, SEMD.hasta, SEMD.areaId)) return;
+  logAcc(`${byId(DB.profesionales,pid).nombre}: los ${DIAS[dia].toLowerCase()} ${SEMD.desde} a ${SEMD.hasta} en ${sucNueva.nombre}`);
+  const q = SEMD; SEMD = {};
+  render();
+  if(mudanza.length) toast('Guardado. Le saqué ese día de '+mudanza.map(x=>x.suc?x.suc.nombre:'').join(', '));
+  else toast('Guardado');
+  suSemana(pid);
+}
+function sacarDiaSemana(pid, dia){
+  if(!ponerDiaSemana(pid, dia, null, null, null)) return;
+  logAcc(`${byId(DB.profesionales,pid).nombre}: los ${DIAS[dia].toLowerCase()} no trabaja`);
+  SEMD = {}; render(); toast('Guardado'); suSemana(pid);
+}
+
+/* ---- copiar un día al resto ---- */
+function copiarSemana(pid){
+  const sem = semanaDe(pid);
+  const conHorario = DIAS_ORD.filter(d=>sem[d].length);
+  if(!conHorario.length){ toast('Primero cargale un día'); return; }
+  sheet('Copiar un día al resto', `
+    <div class="infobox">Elegí el día que ya está bien cargado. Se copia a los días
+      de lunes a viernes que no tengan nada.</div>
+    <div class="listcard">${conHorario.map(d=>{
+      const x=sem[d][0];
+      return `<button class="lr" onclick="hacerCopiarSemana('${pid}',${d})">
+        <div class="av">${DIAS[d].slice(0,3)}</div>
+        <div class="g"><b>${x.h.desde} a ${x.h.hasta}</b>
+          <span>${esc(x.suc?x.suc.nombre:'')} · ${x.area.icono} ${esc(x.area.nombre)}</span></div>
+        ${ic('chev','sm')}</button>`;}).join('')}</div>`);
+}
+function hacerCopiarSemana(pid, dia){
+  const x = semanaDe(pid)[dia][0]; if(!x) return;
+  let n=0;
+  [1,2,3,4,5].forEach(d=>{
+    if(d===dia) return;
+    if(semanaDe(pid)[d].length) return;      /* no pisa lo que ya está cargado */
+    if(ponerDiaSemana(pid, d, x.h.desde, x.h.hasta, x.area.id)) n++;
+  });
+  logAcc(`${byId(DB.profesionales,pid).nombre}: se copió el ${DIAS[dia].toLowerCase()} a ${n} días`);
+  render(); toast(n?('Copiado a '+n+' días'):'Los demás días ya tenían horario');
+  suSemana(pid);
+}
+
+/* ============================================================
+   EL CUADRO DE TODA LA SEMANA, TODOS LOS LOCALES
+   Lo que la supervisora hoy hace con una hoja y una birome.
+   ============================================================ */
+function profesParaHorarios(){
+  let ps = DB.profesionales.filter(p=>p.activa);
+  const u = usuario();
+  if(perm('equipo')==='prop') ps = ps.filter(p=>p.id===u.profId);
+  return ps.sort((a,b)=>a.nombre.localeCompare(b.nombre));
+}
+/* los avisos: lo que la supervisora tendría que sacar a mano */
+function avisosHorarios(sucFiltro){
+  const av = [];
+  const ps = profesParaHorarios();
+  ps.forEach(p=>{
+    const sem = semanaDe(p.id);
+    if(!DIAS_ORD.some(d=>sem[d].length))
+      av.push({n:'rojo', t:esc(p.nombre)+' no tiene ningún horario cargado'});
+    diasChocados(p.id).forEach(d=>
+      av.push({n:'naranja', t:esc(p.nombre.split(' ')[0])+' está en dos locales el '+DIAS[d].toLowerCase()}));
+  });
+  /* áreas sin nadie, pero solo los días en que el local sí abre */
+  const areas = DB.areas.filter(a=>a.activa && (!sucFiltro || a.sucursalId===sucFiltro));
+  DIAS_ORD.forEach(d=>{
+    const porSuc = {};
+    areas.forEach(a=>{
+      const hay = DB.horarios.some(h=>h.dia===d && (byId(DB.asign,h.asignId)||{}).areaId===a.id);
+      porSuc[a.sucursalId] = porSuc[a.sucursalId] || [];
+      porSuc[a.sucursalId].push({a, hay});
+    });
+    Object.entries(porSuc).forEach(([sid, lista])=>{
+      if(!lista.some(x=>x.hay)) return;                 /* ese día el local no abre */
+      lista.filter(x=>!x.hay).forEach(x=>{
+        const su=byId(DB.sucursales,sid);
+        av.push({n:'rojo', t:DIAS[d]+' · '+esc(su?su.nombre:'')+' · '+esc(x.a.nombre)+': no queda nadie'});
+      });
+    });
+  });
+  return av;
+}
+
+function vHorarios(){
+  const ps = profesParaHorarios();
+  /* la profesional entra y ve SU semana; los avisos de cobertura son de
+     quien organiza el negocio, no de ella */
+  const organiza = ['todo','area','suc'].includes(perm('equipo'));
+  const sucs = DB.sucursales.filter(x=>x.activa);
+  const filtro = ST.horSuc && sucs.some(x=>x.id===ST.horSuc) ? ST.horSuc : null;
+  const av = organiza ? avisosHorarios(filtro) : [];
+  const gente = filtro
+    ? ps.filter(p=>DIAS_ORD.some(d=>semanaDe(p.id)[d].some(x=>x.suc&&x.suc.id===filtro)))
+    : ps;
+
+  return `<div class="pad">
+    <div class="small muted" style="margin-bottom:11px">${organiza
+      ? 'Toda la semana, todos los locales. Tocá una celda para cambiar ese día.'
+      : 'Tu semana de trabajo.'}</div>
+
+    ${!organiza?'':av.length?`<div class="card cardp" style="margin-bottom:12px;padding:10px 12px">
+      <div style="font-weight:700;font-size:13.5px;margin-bottom:7px">Hay ${av.length} ${av.length===1?'cosa':'cosas'} para resolver</div>
+      ${av.slice(0,8).map(x=>`<div class="avh ${x.n}">${x.t}</div>`).join('')}
+      ${av.length>8?`<div class="tiny muted" style="margin-top:6px">y ${av.length-8} más</div>`:''}
+    </div>`:`<div class="okbox" style="margin-bottom:12px">Está todo cubierto: nadie sin horario
+      y ningún área sin gente.</div>`}
+
+    ${(organiza && sucs.length>1)?`<div class="subtabs" style="padding:0 0 11px">
+      <button class="ptab ${!filtro?'on':''}" onclick="ST.horSuc=null;render()">Todos</button>
+      ${sucs.map(x=>`<button class="ptab ${filtro===x.id?'on':''}"
+        onclick="ST.horSuc='${x.id}';render()">${esc(x.nombre)}</button>`).join('')}
+    </div>`:''}
+
+    <div class="horwrap">
+      <table class="hortab">
+        <thead><tr><th class="hnom">Quién</th>
+          ${DIAS_ORD.map(d=>`<th>${DIAS[d].slice(0,3)}</th>`).join('')}</tr></thead>
+        <tbody>
+          ${gente.length?gente.map(p=>{
+            const sem = semanaDe(p.id);
+            const choc = diasChocados(p.id);
+            const puede = puedeTocarHorarioDe(p.id);
+            return `<tr>
+              <th class="hnom"><button class="lnk" onclick="suSemana('${p.id}')">${esc(p.nombre)}</button></th>
+              ${DIAS_ORD.map(d=>{
+                const hs = filtro ? sem[d].filter(x=>x.suc&&x.suc.id===filtro) : sem[d];
+                const malo = choc.includes(d);
+                return `<td class="${hs.length?'hay':'no'}${malo?' choque':''}"
+                  ${puede?`onclick="SEMD={};editarDiaSemana('${p.id}',${d})"`:''}>
+                  ${hs.length?hs.map(x=>`<b>${x.h.desde.replace(':00','')}-${x.h.hasta.replace(':00','')}</b>
+                    <span>${esc(x.suc?sucCorta(x.suc.nombre):'')}</span>`).join('')
+                    :'<i>—</i>'}</td>`;}).join('')}
+            </tr>`;}).join('')
+          :`<tr><td colspan="8"><div class="empty">Nadie con horario en este local.</div></td></tr>`}
+        </tbody>
+      </table>
+    </div>
+    <div class="tiny muted" style="margin-top:9px">
+      ${sucs.map(x=>esc(sucCorta(x.nombre))+' = '+esc(x.nombre)).join(' · ')}
+    </div>
+  </div>`;
+}
+
 function profesDeSucursal(){
   const areasS = areasDeSucursal();
   const ids = [...new Set(DB.asign.filter(a=>areasS.some(x=>x.id===a.areaId)).map(a=>a.profId))];
@@ -4519,7 +5064,10 @@ function verProfesional(pid){
       ${total?`<div class="btns"><button class="btn sec" onclick="editarProfesional('${pid}')">${ic('edit','sm')} Editar datos</button></div>`:''}
     </div>
 
-    <div class="h3">Dónde trabaja</div>
+    ${puedeTocarHorarioDe(pid)?`<button class="btn" style="margin-bottom:13px" onclick="closeSheet();suSemana('${pid}')">
+      ${ic('clock','sm')} Su semana de trabajo</button>`:''}
+
+    <div class="h3">Dónde trabaja y qué hace</div>
     <div class="listcard">${ars.length?ars.map(x=>{
       const hs = DB.horarios.filter(h=>h.asignId===x.as.id).sort((a,b)=>a.dia-b.dia);
       return `<button class="lr" onclick="${puede?`editarAsignacion('${x.as.id}')`:''}">
@@ -4640,8 +5188,10 @@ function hacerAsignacion(pid, areaId){
   const as = {id:uid('as'), profId:pid, areaId, servicios:svs, comision:null};
   DB.asign.push(as);
   /* horario habitual por defecto: lunes a viernes 9 a 17, para que salga andando */
+  /* los turnos se fraccionan de a 6 horas; el almuerzo no se carga:
+     lo hacen cuando tienen un hueco y lo arreglan con la cajera */
   [1,2,3,4,5].forEach(d=>DB.horarios.push({id:uid('ho'), asignId:as.id, dia:d,
-    desde:'09:00', hasta:'17:00', pausaD:'13:00', pausaH:'14:00'}));
+    desde:'09:00', hasta:'15:00', pausaD:null, pausaH:null}));
   logAcc(`${byId(DB.profesionales,pid).nombre} sumada a ${byId(DB.areas,areaId).nombre}`);
   save(); closeSheet(); render();
   toast('Asignada. Ajustale el horario.');
@@ -4655,24 +5205,12 @@ function editarAsignacion(asId){
   sheet(p.nombre.split(' ')[0]+' en '+area.nombre, `
     <div class="small muted" style="margin-bottom:13px">${area.icono} ${esc(area.nombre)} · ${esc(suc.nombre)}</div>
 
-    <div class="h3" style="margin-top:0">Horario habitual</div>
-    <div class="small muted" style="margin-bottom:9px">Esta es la base. Los cambios de una semana puntual
-    se hacen desde la solapa Semana.</div>
-    <div class="card cardp">
-      ${[1,2,3,4,5,6,0].map(d=>{
-        const h = DB.horarios.find(x=>x.asignId===asId && x.dia===d);
-        return `<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line)">
-          <input type="checkbox" id="hd_${d}" ${h?'checked':''} style="width:19px;height:19px;flex:none;accent-color:var(--acc)"
-            onchange="document.getElementById('hf_${d}').style.opacity=this.checked?1:.35">
-          <div style="width:64px;font-size:13px;font-weight:600">${DIAS[d].slice(0,3)}</div>
-          <div id="hf_${d}" class="row" style="flex:1;gap:6px;opacity:${h?1:.35}">
-            <input type="time" id="ha_${d}" value="${h?h.desde:'09:00'}" style="padding:7px 8px">
-            <input type="time" id="hb_${d}" value="${h?h.hasta:'17:00'}" style="padding:7px 8px">
-          </div></div>`;}).join('')}
-      <div class="row" style="margin-top:11px">
-        <div><label>Pausa desde</label><input type="time" id="hpd" value="${(DB.horarios.find(x=>x.asignId===asId)||{}).pausaD||''}" style="padding:8px"></div>
-        <div><label>Pausa hasta</label><input type="time" id="hph" value="${(DB.horarios.find(x=>x.asignId===asId)||{}).pausaH||''}" style="padding:8px"></div>
-      </div>
+    <div class="h3" style="margin-top:0">Horario</div>
+    <div class="card cardp" style="margin-bottom:4px">
+      <div class="small muted" style="margin-bottom:9px">El horario ya no se carga por área:
+        se carga en <b>la semana de ${esc(p.nombre.split(' ')[0])}</b>, todo junto y en un solo lugar.</div>
+      <button class="btn sec" onclick="closeSheet();suSemana('${as.profId}')">
+        ${ic('clock','sm')} Ver y cambiar su semana</button>
     </div>
 
     <div class="h3">Servicios que hace acá</div>
@@ -4689,32 +5227,12 @@ function editarAsignacion(asId){
 }
 function guardarAsignacion(asId){
   const as = byId(DB.asign, asId);
-  const pd = document.getElementById('hpd').value, ph = document.getElementById('hph').value;
-  /* horarios imposibles: el "hasta" antes del "desde" */
-  const malos=[];
-  [1,2,3,4,5,6,0].forEach(d=>{
-    if(document.getElementById('hd_'+d).checked){
-      const a=document.getElementById('ha_'+d).value, b=document.getElementById('hb_'+d).value;
-      if(!a||!b||mh(b)<=mh(a)) malos.push(DIAS[d]);
-    }
-  });
-  if(malos.length){ toast('Revisá el horario de: '+malos.join(', ')); return; }
-  if(pd&&ph&&mh(ph)<=mh(pd)){ toast('Revisá la pausa: el "hasta" tiene que ser posterior'); return; }
   const cm = document.getElementById('acom').value;
   if(cm!=='' && (+cm>100 || +cm<0)){ toast('La comisión tiene que estar entre 0 y 100'); return; }
-  DB.horarios = DB.horarios.filter(h=>h.asignId!==asId);
-  [1,2,3,4,5,6,0].forEach(d=>{
-    if(document.getElementById('hd_'+d).checked){
-      DB.horarios.push({id:uid('ho'), asignId:asId, dia:d,
-        desde:document.getElementById('ha_'+d).value,
-        hasta:document.getElementById('hb_'+d).value, pausaD:pd||null, pausaH:ph||null});
-    }
-  });
   as.servicios = [...document.querySelectorAll('.asv:checked')].map(x=>x.value);
-  const c = document.getElementById('acom').value;
-  as.comision = c===''?null:+c;
-  logAcc(`Horario actualizado: ${byId(DB.profesionales,as.profId).nombre} en ${byId(DB.areas,as.areaId).nombre}`);
-  save(); closeSheet(); render(); toast('Horario guardado');
+  as.comision = cm===''?null:+cm;
+  logAcc(`Servicios y comisión: ${byId(DB.profesionales,as.profId).nombre} en ${byId(DB.areas,as.areaId).nombre}`);
+  save(); closeSheet(); render(); toast('Guardado');
 }
 function quitarAsignacion(asId){
   const as = byId(DB.asign, asId);
@@ -4737,7 +5255,9 @@ function horariosFrecuentes(){
   const c={};
   DB.horarios.forEach(h=>{ const k=h.desde+'-'+h.hasta; c[k]=(c[k]||0)+1; });
   const arr=Object.entries(c).sort((a,b)=>b[1]-a[1]).slice(0,4).map(x=>x[0].split('-'));
-  ['09:00-17:00','12:00-20:00','10:00-18:00'].forEach(d=>{
+  /* de arranque, bloques de 6 horas que cubren el día de 9 a 19:30.
+     A medida que cargan los de verdad, estos se caen solos de la lista. */
+  ['09:00-15:00','13:30-19:30','10:00-16:00'].forEach(d=>{
     const [a,b]=d.split('-');
     if(!arr.some(x=>x[0]===a&&x[1]===b) && arr.length<5) arr.push([a,b]);
   });
@@ -6508,6 +7028,8 @@ function editarArea(id){
       <select id="asu">${DB.sucursales.map(x=>`<option value="${x.id}" ${(a?a.sucursalId:ST.sucursalId)===x.id?'selected':''}>${esc(x.nombre)}</option>`).join('')}</select></div>
     <div class="f"><label>Orden en que aparece</label>
       <input type="number" id="aor" value="${a?a.orden:DB.areas.length}" inputmode="numeric"></div>
+    <div class="chk"><input type="checkbox" id="atu" ${(!a || a.porTurno!==false)?'checked':''}>
+      <div class="g"><b>Se da con turno</b><span class="small muted">Tildado: aparece en la Agenda. Destildado: es por orden de llegada y aparece solo en la Fila</span></div></div>
     ${a?`<div class="chk"><input type="checkbox" id="aa" ${a.activa?'checked':''}>
       <div class="g"><b>Área en uso</b><span class="small muted">Si la destildás desaparece de la agenda pero no se pierde nada</span></div></div>`:''}
     <button class="btn" style="margin-top:13px" onclick="guardarArea('${id||''}')">Guardar</button>
@@ -6525,12 +7047,14 @@ function guardarArea(id){
     a.supervisoraId=g('as')||null;
     a.sucursalId=g('asu')||a.sucursalId;
     a.orden=+g('aor')||0;
+    const atu=document.getElementById('atu'); if(atu) a.porTurno=atu.checked;
     const aa=document.getElementById('aa'); if(aa) a.activa=aa.checked;
     logAcc(`Área editada: ${n}`);
   }else{
     DB.areas.push({id:uid('ar'), sucursalId:g('asu')||ST.sucursalId, nombre:n,
       icono:g('ai')||'✨', supervisoraId:g('as')||null,
-      orden:+g('aor')||DB.areas.length, activa:true});
+      orden:+g('aor')||DB.areas.length, activa:true,
+      porTurno: (document.getElementById('atu')||{checked:true}).checked});
     logAcc(`Área nueva: ${n}`);
   }
   ST.areaId=null;
