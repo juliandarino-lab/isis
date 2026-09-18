@@ -357,11 +357,17 @@ label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:0 0
 .bd.ac{background:var(--accsoft);color:var(--acc2);border-color:#F2C9CD}
 
 /* sheet / modal */
-.veil{position:fixed;inset:0;background:rgba(22,22,26,.55);z-index:100;
-  display:flex;align-items:flex-end;justify-content:center}
+.veil{position:fixed;left:0;right:0;top:0;background:rgba(22,22,26,.55);z-index:100;
+  display:flex;align-items:flex-end;justify-content:center;
+  /* --alto es lo que queda de pantalla DE VERDAD: cuando sale el teclado,
+     achica. Sin esto la ventanita se queda del alto de la pantalla entera
+     y el teclado le tapa la mitad de abajo, que es justo donde están los
+     botones de guardar. */
+  height:var(--alto, 100vh);}
 .sheet{
-  background:var(--bg);width:100%;max-width:560px;max-height:92vh;overflow-y:auto;
+  background:var(--bg);width:100%;max-width:560px;max-height:100%;overflow-y:auto;
   border-radius:20px 20px 0 0;box-shadow:var(--sh2);animation:up .2s ease;
+  -webkit-overflow-scrolling:touch;
 }
 @keyframes up{from{transform:translateY(30px)}to{transform:translateY(0)}}
 .sheet .sh{position:sticky;top:0;background:var(--bg);padding:16px 16px 11px;
@@ -1923,14 +1929,62 @@ function sheet(title, body, opts={}){
         <div class="sb" id="sheetbody">${body}</div>
       </div>
     </div>`;
-  if(opts.focus) setTimeout(()=>{const e=document.getElementById(opts.focus); if(e)e.focus();},80);
+  if(opts.focus) setTimeout(()=>{
+    const e=document.getElementById(opts.focus);
+    if(e){ e.focus(); acomodarAlTeclado(e); }
+  },80);
   ponerCapa('hoja');
 }
-function closeSheet(){
-  const abierta = !!document.getElementById('modal').innerHTML;
-  document.getElementById('modal').innerHTML='';
-  if(abierta) sacarCapa('hoja');
+
+/* ============================================================
+   EL TECLADO DEL CELULAR
+   Al tocar un casillero sale el teclado y se come la mitad de
+   abajo de la pantalla: los botones quedan tapados y parece que
+   la app no tiene con qué seguir. Acá la ventanita se achica a
+   lo que queda libre y el casillero en el que está escribiendo
+   sube solo para que lo vea.
+   ============================================================ */
+function medirPantalla(){
+  const vv = window.visualViewport;
+  const alto = vv ? vv.height : window.innerHeight;
+  document.documentElement.style.setProperty('--alto', alto+'px');
 }
+function acomodarAlTeclado(el){
+  /* el teclado tarda un toque en aparecer, así que se mide después */
+  const subir = () => {
+    medirPantalla();
+    const hoja = el.closest ? el.closest('.sheet') : null;
+    if(hoja){
+      /* se mueve la ventanita a mano: scrollIntoView no siempre mueve el
+         contenedor correcto y el casillero quedaba abajo del teclado */
+      const r = el.getBoundingClientRect(), h = hoja.getBoundingClientRect();
+      const centro = (r.top - h.top) + hoja.scrollTop - (h.height/2) + (r.height/2);
+      hoja.scrollTop = Math.max(0, Math.min(centro, hoja.scrollHeight - h.height));
+    } else {
+      try{ el.scrollIntoView({block:'center'}); }catch(e){}
+    }
+  };
+  setTimeout(subir, 260);
+  setTimeout(subir, 520);
+}
+function engancharTeclado(){
+  medirPantalla();
+  const vv = window.visualViewport;
+  if(vv){
+    vv.addEventListener('resize', medirPantalla);
+    vv.addEventListener('scroll', medirPantalla);
+  }
+  window.addEventListener('resize', medirPantalla);
+  window.addEventListener('orientationchange', ()=>setTimeout(medirPantalla,300));
+  /* cualquier casillero que se toque, sube */
+  document.addEventListener('focusin', e=>{
+    const t = e.target;
+    if(!t || !/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+    if(t.type==='checkbox' || t.type==='radio') return;
+    acomodarAlTeclado(t);
+  });
+}
+function closeSheet(){ document.getElementById('modal').innerHTML=''; }
 
 /* ============================================================
    EL BOTÓN DE ATRÁS DEL CELULAR
@@ -1949,14 +2003,11 @@ function ponerCapa(tipo){
   CAPAS.push(tipo);
   try{ history.pushState({isis:CAPAS.length}, ''); }catch(e){}
 }
-/* cerramos algo nosotros (con la X o con un botón): hay que sacar
-   también el escalón del historial, si no "atrás" queda desfasado */
-function sacarCapa(tipo){
-  if(CAPAS[CAPAS.length-1] !== tipo) return;
-  CAPAS.pop();
-  VOLVIENDO = true;
-  try{ history.back(); }catch(e){ VOLVIENDO = false; }
-}
+/* Al cerrar con la X NO se toca el historial. Tocarlo ahí era un lío:
+   history.back() tarda en llegar y si mientras tanto se abría otra
+   ventanita, el "atrás" atrasado la cerraba sola. Así que el escalón
+   queda, y si después tocan atrás sin nada abierto, ese toque se lo
+   come ese escalón y listo. */
 function engancharAtras(){
   /* Se deja SIEMPRE un escalón de sobra abajo de la app. Sin eso, el
      primer "atrás" en el inicio se va de la página y no hay forma de
@@ -1969,7 +2020,12 @@ function engancharAtras(){
   window.addEventListener('popstate', ()=>{
     if(VOLVIENDO){ VOLVIENDO = false; return; }
     const t = CAPAS.pop();
-    if(t === 'hoja'){ document.getElementById('modal').innerHTML=''; return; }
+    if(t === 'hoja'){
+      /* si ya la habían cerrado con la X, este escalón quedó de más:
+         se lo come y no pasa nada */
+      document.getElementById('modal').innerHTML='';
+      return;
+    }
     if(t === 'vista'){
       const v = VISTAS.pop() || 'home';
       ST.view = vistaPermitida(v) ? v : 'home';
@@ -3663,13 +3719,22 @@ const NT = {clientaId:null, areaId:null, servicioId:null, profId:null, hora:null
             visitaId:null, motivo:'', aviso:null, espera:false};
 /* el área en la que estamos parados (la pestaña "Todo el día" no es un área) */
 const areaActual = () => (ST.areaId && ST.areaId!=='__dia') ? ST.areaId : (areasDeSucursal()[0]||{}).id;
+/* las áreas que SE AGENDAN. La depilación descartable, la manicuría y la
+   pedicuría son por orden de llegada: no se les da turno, van a la Fila.
+   Si no se filtra acá, la agenda ofrece darle turno a media pierna. */
+const areasConTurno = () => areasDeSucursal().filter(a=>a.porTurno!==false);
+const areaParaTurno = () => {
+  const con = areasConTurno();
+  const hoyEs = areaActual();
+  return (hoyEs && con.some(a=>a.id===hoyEs)) ? hoyEs : (con[0]||{}).id;
+};
 /* EL ORDEN: primero el LUGAR (servicio -> profesional y hora) y recien al final la clienta.
    Es como se piensa en el mostrador: "tengo las 3 y media con Caro, ¿quien la agarra?".
    Si la clienta YA se sabe (otra visita, agregar servicio) se saltea el ultimo paso. */
 function nuevoTurno(profId, hora){
   NT.clientaId=null; NT.servicioId=null; NT.profId=profId||null; NT.hora=hora||null;
   NT.visitaId=null; NT.motivo=''; NT.aviso=null; NT.espera=false;
-  NT.areaId = areaActual();
+  NT.areaId = areaParaTurno();
   if(profId){
     const as = DB.asign.find(a=>a.profId===profId && a.areaId===NT.areaId);
     if(as) NT.areaId = as.areaId;
@@ -3688,7 +3753,7 @@ function pasoCliente(){
       oninput="pintarClientas(this.value)" autocomplete="off"></div>
     <div id="reslist" class="listcard">${listaClientasHTML('')}</div>
     <div class="sep"></div>
-    <button class="btn sec" onclick="nuevaClientaRapida()">${ic('plus','sm')} Es una clienta nueva</button>`,
+    <button class="btn sec" id="btnueva" onclick="nuevaClientaRapida()">${ic('plus','sm')} Es una clienta nueva</button>`,
     {focus:'bq'});
 }
 /* elegir la clienta es el ultimo paso: de aca sale el turno (o la lista de espera) */
@@ -3706,14 +3771,26 @@ function listaClientasHTML(q){
     <div class="g"><b>${esc(c.nombre)}</b><span>${esc(c.tel)}${c.notas?' · ⚠ '+esc(c.notas.slice(0,30)):''}</span></div>
     ${ic('chev','sm')}</button>`).join('');
 }
-function pintarClientas(q){ document.getElementById('reslist').innerHTML = listaClientasHTML(q); }
+function pintarClientas(q){
+  document.getElementById('reslist').innerHTML = listaClientasHTML(q);
+  /* el botón se lleva el nombre que ya escribió: volver a tipearlo es de
+     cajón que moleste, y es el paso donde más se traba la recepcionista */
+  const b = document.getElementById('btnueva');
+  const t = (q||'').trim();
+  if(b) b.innerHTML = t ? (ic('plus','sm')+' Es nueva: '+esc(t))
+                        : (ic('plus','sm')+' Es una clienta nueva');
+}
 function nuevaClientaRapida(){
+  /* lo que venía escribiendo en el buscador ya es el nombre */
+  const bq = document.getElementById('bq');
+  const yaEscrito = bq ? bq.value.trim() : '';
   sheet('Clienta nueva', `
     <div class="infobox">Con el nombre y el teléfono alcanza. Todo lo demás es opcional y se completa después.</div>
-    <div class="f"><label>Nombre y apellido</label><input id="nn" autocomplete="off"></div>
+    <div class="f"><label>Nombre y apellido</label><input id="nn" autocomplete="off" value="${esc(yaEscrito)}"></div>
     <div class="f"><label>Teléfono</label><input id="nt" inputmode="tel" placeholder="221 555-1234"></div>
     <div class="f"><label>Fecha de nacimiento (opcional)</label><input type="date" id="nb"></div>
-    <button class="btn" onclick="guardarClientaRapida()">Guardar y seguir</button>`, {focus:'nn'});
+    <button class="btn" onclick="guardarClientaRapida()">Guardar y seguir</button>`,
+    {focus: yaEscrito ? 'nt' : 'nn'});
 }
 function guardarClientaRapida(){
   if(!puedeEditarClientas()){ toast('No tenés permiso para modificar clientas'); return; }
@@ -3725,7 +3802,13 @@ function guardarClientaRapida(){
   elegidaClienta(c.id);
 }
 function pasoServicio(){
-  const areas = areasDeSucursal();
+  const areas = areasConTurno();
+  if(!areas.length) return sheet('Nada para agendar', `
+    <div class="infobox" style="text-align:left">En esta sucursal todo se atiende
+      <b>por orden de llegada</b>. A esas clientas se las anota en la <b>Fila</b>
+      cuando llegan, no con turno.</div>
+    <button class="btn" onclick="closeSheet();go('fila')">Ir a la Fila</button>`);
+  if(!NT.areaId || !areas.some(a=>a.id===NT.areaId)) NT.areaId = areas[0].id;
   const svs = DB.servicios.filter(s=>s.areaId===NT.areaId && s.activo);
   const cl = NT.clientaId ? byId(DB.clientas, NT.clientaId) : null;
   const p0 = NT.profId ? byId(DB.profesionales, NT.profId) : null;
@@ -8748,6 +8831,7 @@ save();
 aplicarMQ();
 ponerManifest();
 engancharAtras();
+engancharTeclado();
 render();
 
 /* ============================================================
@@ -8757,7 +8841,7 @@ render();
    Julián actualizaba y no veía los cambios. Cada vez que se abre,
    la app se fija sola si hay una más nueva y se recarga.
    ============================================================ */
-const VERSION_ISIS = 7;
+const VERSION_ISIS = 8;
 async function mirarSiHayNueva(){
   if(location.protocol === 'file:') return;
   try{
