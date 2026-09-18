@@ -4351,7 +4351,9 @@ function elDia(){
 function quienEstaLibre(){
   if(!puedeEditarAgenda()){ toast('No podés cargar turnos'); return; }
   const now = ahoraMin(), F = hoy(), out = [];
-  areasDeSucursal().forEach(ar=>{
+  /* solo lo que se agenda: a la depilación, la manicuría y la pedicuría
+     no se les da turno aunque haya un hueco, van por orden de llegada */
+  areasConTurno().forEach(ar=>{
     profesDelDia(ar.id, F).forEach(p=>{
       huecosLibres(p.id, ar.id, F).forEach(([a,bb])=>{
         if(bb <= now+10) return;
@@ -4397,9 +4399,12 @@ function primerHueco(areaId, servicioId, diasMax){
 }
 function cuandoHayLugar(areaId){
   if(!puedeEditarAgenda()){ toast('No podés cargar turnos'); return; }
-  const areas = areasDeSucursal();
-  if(!areas.length){ toast('Esta sucursal no tiene áreas'); return; }
-  const aid = areaId || ((ST.areaId && ST.areaId!=='__dia' && areas.some(a=>a.id===ST.areaId)) ? ST.areaId : areas[0].id);
+  const areas = areasConTurno();
+  if(!areas.length){ toast('Acá no hay nada con turno: todo es por orden de llegada'); return; }
+  /* aunque se lo pidan a mano, si esa área no se agenda no se contesta:
+     si no, entra por la ventana lo que se cerró por la puerta */
+  let aid = areaId || (ST.areaId!=='__dia' ? ST.areaId : null);
+  if(!aid || !areas.some(a=>a.id===aid)) aid = areas[0].id;
   const svs = DB.servicios.filter(x=>x.areaId===aid && x.activo);
   const filas = svs.map(x=>({s:x, h:primerHueco(aid, x.id, 21)}));
   sheet('¿Cuándo hay lugar?', `
@@ -8841,7 +8846,7 @@ render();
    Julián actualizaba y no veía los cambios. Cada vez que se abre,
    la app se fija sola si hay una más nueva y se recarga.
    ============================================================ */
-const VERSION_ISIS = 8;
+const VERSION_ISIS = 9;
 async function mirarSiHayNueva(){
   if(location.protocol === 'file:') return;
   try{
