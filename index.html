@@ -678,7 +678,7 @@ function seed(){
     'Ivana Salcedo','Romina Bergara'];
   D.profesionales = nombres.map((n,i)=>({
     id:'pr'+(i+1), nombre:n, tel:'221 5'+(30+i)+'-'+(1000+i*137),
-    activa:true, fijoMonto:0, fijoFrec:'mes', liqFrec:['semana','mes','semana','mes','quincena'][i%5],
+    activa:true, comision:null, fijoMonto:0, fijoFrec:'mes', liqFrec:['semana','mes','semana','mes','quincena'][i%5],
     fichaje: i<3?'qr':'foto'
   }));
   const P = D.profesionales;
@@ -1283,7 +1283,10 @@ function migrar(){
     if(u.sucursalId) ST.sucursalId = u.sucursalId;
     const mias = areasDeUsuario(u); if(mias.length) ST.areaId = mias[0];
   }
-  DB.profesionales.forEach(p=>{ if(!p.fichaje) p.fichaje='foto'; });
+  DB.profesionales.forEach(p=>{
+    if(!p.fichaje) p.fichaje='foto';
+    if(p.comision===undefined) p.comision=null; /* tasa habitual pendiente en bases anteriores */
+  });
   /* las fotos de fichaje viejas se borran solas para no llenar la memoria */
   const lim = addDays(hoy(), -60);
   DB.fichadas.forEach(f=>{ if(f.fecha<lim){ delete f.fotoEntrada; delete f.fotoSalida; } });
@@ -1413,6 +1416,7 @@ const etiquetaPerm = (mk,v) => ((MODULOS.find(m=>m.k===mk).vals.find(x=>x[0]===v
 /* permiso = el del rol, salvo que esa persona tenga una excepción propia */
 function perm(k){
   const u = usuario();
+  if(k==='caja' && u.rol==='supervisora') return 'no';
   if(u.permisos && u.permisos[k]!=null && u.permisos[k]!=='') return u.permisos[k];
   const P = (DB.cfg.permisos && DB.cfg.permisos[u.rol]) || PERM_DEF[u.rol];
   return P[k];
@@ -1456,9 +1460,9 @@ const puedeHorarios    = () => ['todo','suc','area'].includes(perm('equipo'));
    porque recepción es la que entrega la plata y tiene que saber cuánto y a quién. */
 const puedeVerComisiones=() => ['todo','suc','area'].includes(perm('equipo'));
 /* PAGAR y cerrar liquidaciones: administración y recepción. La supervisora mira, no paga. */
-const puedeLiquidar    = () => ['todo','suc'].includes(perm('equipo'));
-/* TOCAR el porcentaje o eximir una comisión: solo administración. */
-const puedeAjustarComision = () => perm('equipo')==='todo';
+const puedeLiquidar    = () => usuario().rol!=='supervisora' && ['todo','suc'].includes(perm('equipo'));
+/* Ajustar porcentajes no da acceso a liquidar ni pagar: eso pertenece a Caja. */
+const puedeAjustarComision = () => perm('equipo')==='todo' || usuario().rol==='supervisora';
 const puedeVerReportes = () => perm('reportes')!=='no';
 /* la vista de TODO EL DÍA de la sucursal es solo para quien ve la sucursal entera */
 const puedeVerDiaCompleto = () => ['todo','suc'].includes(perm('agenda'));
@@ -1765,6 +1769,19 @@ function aCobrarCon(saldoContado, medio){
 function comisionLinea(l){
   if(l.exenta) return 0;
   return Math.round(l.precio * (l.comisionPct/100));   /* SIEMPRE sobre contado */
+}
+/* La tasa habitual pertenece a la profesional. Las tasas por área/servicio
+   anteriores se leen solo mientras su ficha aún no tenga una tasa definida. */
+function comisionPctPara(profId, areaId, servicioId){
+  const p=byId(DB.profesionales,profId);
+  if(p && p.comision!==null && p.comision!==undefined && p.comision!=='' && Number.isFinite(+p.comision))
+    return +p.comision;
+  const as=DB.asign.find(a=>a.profId===profId && a.areaId===areaId);
+  if(as && as.comision!==null && as.comision!==undefined && Number.isFinite(+as.comision))
+    return +as.comision;
+  const sv=byId(DB.servicios,servicioId);
+  return sv && sv.comision!==null && sv.comision!==undefined && Number.isFinite(+sv.comision)
+    ? +sv.comision : 0;
 }
 
 /* ============================================================
@@ -2741,7 +2758,6 @@ function pasaAtenderse(fid){
 function hacerPasar(fid, pid){
   if(!puedeEditarAgenda()){ toast('No podés tocar la fila'); return; }
   const f=byId(DB.fila,fid); if(!f) return;
-  const as=DB.asign.find(a=>a.profId===pid && a.areaId===f.areaId);
   /* un renglón por cada cosa que se hace: la de depilación se hace media
      pierna, axilas y cavado, y cada una tiene su precio y su comisión */
   let reloj = mh(horaAhora());
@@ -2750,7 +2766,7 @@ function hacerPasar(fid, pid){
     const pq = paqueteActivo(f.clientaId, sid);
     const l = {id:uid('ln'), servicioId:sid, profId:pid, areaId:f.areaId,
       hora:hm(reloj), dur:sv.dur, estado:'serv', precio:sv.contado, descuento:0,
-      comisionPct:(as&&as.comision!=null)?as.comision:sv.comision, exenta:false, motivo:'',
+      comisionPct:comisionPctPara(pid, f.areaId, sv.id), comisionAuto:true, exenta:false, motivo:'',
       paqueteId: pq?pq.id:null, voucherId:null, consumida:false, liqId:null, forzado:'',
       sinTurno:true};
     reloj += sv.dur;
@@ -3508,6 +3524,10 @@ function cambiarEstado(vid,lid,est,desdeFicha){
   const v=byId(DB.visitas,vid), l=byId(v.lineas,lid);
   if(!puedeMarcarEstado(l, est)){ toast('No podés modificar turnos'); return; }
   ST.ultimoTocado = lid;
+  /* La tasa se fija cuando empieza el trabajo; un turno reservado todavía puede
+     reflejar un cambio de comisión habitual. Los ajustes manuales no se pisan. */
+  if(est==='serv' && l.comisionAuto===true)
+    l.comisionPct=comisionPctPara(l.profId,l.areaId,l.servicioId);
   l.estado=est;
   /* al finalizar se descuenta la sesión del paquete */
   if(est==='fin' && l.paqueteId && !l.consumida){
@@ -3593,8 +3613,8 @@ function cambiarServicio(vid,lid){
   const v=byId(DB.visitas,vid), l=byId(v.lineas,lid);
   const svs=DB.servicios.filter(x=>x.areaId===l.areaId && x.activo);
   sheet('Cambiar el servicio', `
-    <div class="infobox">Cambia la duración y el precio del turno. La comisión se recalcula
-    con el porcentaje del servicio nuevo.</div>
+    <div class="infobox">Cambia la duración y el precio del turno. La comisión corresponde
+    a la profesional que lo realiza.</div>
     <div class="listcard">${svs.map(x=>{
       const hace=profesDe(l.areaId,x.id).some(p=>p.id===l.profId);
       return `<button class="lr" onclick="hacerCambioServicio('${vid}','${lid}','${x.id}')">
@@ -3608,9 +3628,8 @@ function hacerCambioServicio(vid,lid,svId){
   const v=byId(DB.visitas,vid), l=byId(v.lineas,lid);
   const nuevo=byId(DB.servicios,svId), antes=byId(DB.servicios,l.servicioId);
   const aplicar=(motivo)=>{
-    const as=DB.asign.find(a=>a.profId===l.profId && a.areaId===l.areaId);
     l.servicioId=svId; l.dur=nuevo.dur; l.precio=nuevo.contado;
-    l.comisionPct=(as&&as.comision!=null)?as.comision:nuevo.comision;
+    l.comisionPct=comisionPctPara(l.profId,l.areaId,svId); l.comisionAuto=true;
     l.paqueteId = (paqueteActivo(v.clientaId,svId)||{}).id || null;
     if(motivo) l.forzado=motivo;
     logAcc(`${byId(DB.clientas,v.clientaId).nombre}: ${antes?antes.nombre:'?'} → ${nuevo.nombre}${motivo?' — '+motivo:''}`);
@@ -3652,17 +3671,17 @@ function hacerCambioProf(vid,lid,pid){
 function aplicarCambioProf(vid,lid,pid,motivo){
   if(!puedeEditarAgenda()){ toast('No podés modificar turnos'); return; }
   const v=byId(DB.visitas,vid), l=byId(v.lineas,lid);
-  const sv=byId(DB.servicios,l.servicioId);
   const antes = byId(DB.profesionales,l.profId).nombre;
   l.profId = pid; if(motivo) l.forzado=motivo;
-  const as = DB.asign.find(a=>a.profId===pid && a.areaId===l.areaId);
-  l.comisionPct = (as && as.comision!=null) ? as.comision : sv.comision;
+  l.comisionPct = comisionPctPara(pid,l.areaId,l.servicioId);
+  l.comisionAuto = true;
   logAcc(`${byId(DB.clientas,v.clientaId).nombre}: pasada de ${antes} a ${byId(DB.profesionales,pid).nombre}${motivo?' — '+motivo:''}`);
   save(); closeSheet(); render(); toast('Pasada a '+byId(DB.profesionales,pid).nombre.split(' ')[0]);
 }
 function exencionComision(vid,lid){
-  if(!puedeAjustarComision()){ toast('El porcentaje lo cambia administración'); return; }
+  if(!puedeAjustarComision()){ toast('No podés cambiar comisiones'); return; }
   const v=byId(DB.visitas,vid), l=byId(v.lineas,lid);
+  if(l.liqId){ toast('Esta comisión ya fue liquidada'); return; }
   sheet('Comisión de este servicio', `
     <div class="f"><label>Porcentaje</label>
       <input type="number" id="cpct" value="${l.comisionPct}" min="0" max="100"></div>
@@ -3674,13 +3693,18 @@ function exencionComision(vid,lid){
     <button class="btn" onclick="guardarComision('${vid}','${lid}')">Guardar</button>`);
 }
 function guardarComision(vid,lid){
-  if(!puedeAjustarComision()){ toast('El porcentaje lo cambia administración'); return; }
+  if(!puedeAjustarComision()){ toast('No podés cambiar comisiones'); return; }
   const v=byId(DB.visitas,vid), l=byId(v.lineas,lid);
-  const pct = +document.getElementById('cpct').value || 0;
-  if(pct>100 || pct<0){ toast('La comisión tiene que estar entre 0 y 100'); return; }
+  if(l.liqId){ toast('Esta comisión ya fue liquidada'); return; }
+  const valor=document.getElementById('cpct').value.trim(), pct=Number(valor);
+  if(valor==='' || !Number.isFinite(pct) || pct>100 || pct<0){ toast('La comisión tiene que estar entre 0 y 100'); return; }
+  const exenta=document.getElementById('cex').checked;
+  const motivo=document.getElementById('cmot').value.trim();
+  if(exenta && !motivo){ toast('Anotá el motivo de la excepción'); return; }
   l.comisionPct = pct;
-  l.exenta = document.getElementById('cex').checked;
-  l.motivo = document.getElementById('cmot').value;
+  l.comisionAuto = false;
+  l.exenta = exenta;
+  l.motivo = motivo;
   logAcc(`Comisión ajustada: ${byId(DB.clientas,v.clientaId).nombre}`);
   save(); closeSheet(); render(); toast('Comisión actualizada');
 }
@@ -3981,11 +4005,10 @@ function confirmarTurno(){
 function guardarTurno(){
   if(!puedeEditarAgenda()){ toast('No podés modificar turnos'); return; }
   const sv=byId(DB.servicios,NT.servicioId);
-  const as=DB.asign.find(a=>a.profId===NT.profId && a.areaId===NT.areaId);
   const pq = paqueteActivo(NT.clientaId, NT.servicioId);
   const linea = {id:uid('ln'), servicioId:NT.servicioId, profId:NT.profId, areaId:NT.areaId,
     hora:NT.hora, dur:sv.dur, estado:'res', precio:sv.contado, descuento:0,
-    comisionPct:(as&&as.comision!=null)?as.comision:sv.comision, exenta:false, motivo:'',
+    comisionPct:comisionPctPara(NT.profId,NT.areaId,NT.servicioId), comisionAuto:true, exenta:false, motivo:'',
     paqueteId: pq?pq.id:null, voucherId:null, consumida:false, liqId:null,
     forzado: NT.motivo||''};
   let v = NT.visitaId ? byId(DB.visitas, NT.visitaId) : null;
@@ -5400,14 +5423,15 @@ function eqPersonal(){
   const soloSuArea = perm('equipo')==='area';
   return `<div class="pad">
     ${perm('equipo')==='todo'?`<button class="btn" style="margin-bottom:13px" onclick="editarProfesional()">${ic('plus','sm')} Agregar profesional</button>`:''}
-    ${soloSuArea?`<div class="infobox">Podés cambiarle el horario, los servicios y cargarle
-      vacaciones a tu gente. Dar de alta o mover a alguien de área lo hace administración.</div>`:''}
+    ${soloSuArea?`<div class="infobox">Podés cambiar horarios, servicios, vacaciones y
+      la comisión habitual de tu equipo. No tenés acceso a Caja.</div>`:''}
     <div class="listcard">${profes.map(p=>{
       const ars = areasDeProf(p.id);
       return `<button class="lr" onclick="verProfesional('${p.id}')">
         <div class="av">${ini(p.nombre)}</div>
         <div class="g"><b>${esc(p.nombre)}${p.activa?'':' <span class="bd">Inactiva</span>'}</b>
-          <span>${ars.map(x=>x.area.icono+' '+x.area.nombre+' · '+x.suc.nombre).join('  |  ')||'Sin áreas asignadas'}</span></div>
+          <span>${ars.map(x=>x.area.icono+' '+x.area.nombre+' · '+x.suc.nombre).join('  |  ')||'Sin áreas asignadas'}</span>
+          <span class="tiny">Comisión habitual: ${p.comision!=null?p.comision+'%':'sin definir · usa la regla anterior'}</span></div>
         ${ic('chev','sm')}</button>`;}).join('')}</div>
     ${DB.profesionales.filter(p=>!profes.includes(p)).length && perm('equipo')==='todo'?`
       <div class="h3">Trabajan en otras sucursales</div>
@@ -5431,11 +5455,14 @@ function verProfesional(pid){
   sheet(p.nombre, `
     <div class="card cardp" style="margin-bottom:13px">
       <div class="kv"><span class="muted">Teléfono</span><b>${esc(p.tel)||'—'}</b></div>
+      <div class="kv"><span class="muted">Comisión habitual</span><b>${p.comision!=null?p.comision+'%':'Sin definir'}</b></div>
       <div class="kv"><span class="muted">Liquida comisiones</span><b>Por ${esc(p.liqFrec)}</b></div>
       <div class="kv"><span class="muted">Ficha</span><b>${
         p.fichaje==='qr'?'Con QR, desde su celular':(p.fichaje==='simple'?'Lo marca recepción':'Con foto en el mostrador')}</b></div>
       <div class="kv"><span class="muted">Sueldo fijo</span><b>${p.fijoMonto>0?money(p.fijoMonto)+' por '+p.fijoFrec:'No tiene'}</b></div>
       <div class="kv"><span class="muted">Estado</span><b style="color:${p.activa?'var(--ok)':'var(--faint)'}">${p.activa?'Activa':'Inactiva'}</b></div>
+      ${p.comision==null?`<div class="small muted">Hasta que se defina, los turnos nuevos usan la regla anterior del área o servicio.</div>`:''}
+      ${puedeAjustarComision()?`<div class="btns"><button class="btn sec" onclick="editarComisionProfesional('${pid}')">Cambiar comisión habitual</button></div>`:''}
       ${total?`<div class="btns"><button class="btn sec" onclick="editarProfesional('${pid}')">${ic('edit','sm')} Editar datos</button></div>`:''}
     </div>
 
@@ -5449,7 +5476,7 @@ function verProfesional(pid){
         <div class="av" style="font-size:17px">${x.area.icono}</div>
         <div class="g"><b>${esc(x.area.nombre)} · ${esc(x.suc.nombre)}</b>
           <span>${hs.length?hs.map(h=>DIAS[h.dia].slice(0,3)+' '+h.desde+'-'+h.hasta).join(' · '):'Sin horario cargado'}</span>
-          <span class="tiny">${x.as.servicios.length} servicios habilitados${x.as.comision!=null?' · comisión '+x.as.comision+'%':''}</span></div>
+          <span class="tiny">${x.as.servicios.length} servicios habilitados</span></div>
         ${puede?ic('chev','sm'):''}</button>`;}).join(''):`<div class="empty">Todavía no está asignada a ningún área.</div>`}</div>
     ${total?`<button class="btn sec" style="margin-top:9px" onclick="agregarAsignacion('${pid}')">${ic('plus','sm')} Sumarla a un área</button>`:''}
 
@@ -5470,6 +5497,9 @@ function editarProfesional(pid){
   sheet(p?'Editar '+p.nombre:'Profesional nueva', `
     <div class="f"><label>Nombre y apellido</label><input id="pn" value="${p?esc(p.nombre):''}"></div>
     <div class="f"><label>Teléfono</label><input id="pt" value="${p?esc(p.tel):''}" inputmode="tel"></div>
+    <div class="f"><label>Comisión habitual de esta profesional (%)</label>
+      <input type="number" id="pc" value="${p&&p.comision!=null?p.comision:''}" min="0" max="100" step="0.01" inputmode="decimal" placeholder="Ej.: 50">
+      <span class="small muted">Se aplica en todas las sucursales y áreas donde trabaje. Los servicios ya realizados no cambian.</span></div>
     <div class="row f">
       <div><label>Liquida comisiones</label>
         <select id="pl">${['dia','semana','quincena','mes'].map(x=>`<option value="${x}" ${p&&p.liqFrec===x?'selected':''}>Por ${x}</option>`).join('')}</select></div>
@@ -5497,7 +5527,13 @@ function guardarProfesional(pid){
   if(!puedeEditarEquipo()){ toast('Eso lo hace administración'); return; }
   const n=document.getElementById('pn').value.trim();
   if(!n){ toast('Falta el nombre'); return; }
+  const comisionTexto=document.getElementById('pc').value.trim();
+  const comision=comisionTexto===''?null:Number(comisionTexto);
+  if(comision===null || !Number.isFinite(comision) || comision<0 || comision>100){
+    toast('Indicá una comisión entre 0 y 100'); return;
+  }
   const d = {nombre:n, tel:document.getElementById('pt').value.trim(),
+    comision,
     fichaje:document.getElementById('pfi').value,
     liqFrec:document.getElementById('pl').value,
     fijoMonto:+document.getElementById('pf').value||0,
@@ -5514,6 +5550,35 @@ function guardarProfesional(pid){
     save(); closeSheet(); render();
     setTimeout(()=>agregarAsignacion(p.id, true), 250);
   }
+}
+function editarComisionProfesional(pid){
+  if(!puedeAjustarComision()){ toast('No podés cambiar comisiones'); return; }
+  const p=byId(DB.profesionales,pid); if(!p) return;
+  sheet('Comisión de '+p.nombre, `
+    <div class="infobox">Este porcentaje pertenece a <b>${esc(p.nombre)}</b> y se usa en
+      todas las sucursales y servicios que realice. No modifica servicios ya realizados
+      ni comisiones ya liquidadas.</div>
+    <div class="f"><label>Comisión habitual (%)</label>
+      <input type="number" id="pcom" value="${p.comision!=null?p.comision:''}" min="0" max="100" step="0.01" inputmode="decimal" placeholder="Ej.: 50"></div>
+    <button class="btn" onclick="guardarComisionProfesional('${pid}')">Guardar comisión</button>`);
+}
+function guardarComisionProfesional(pid){
+  if(!puedeAjustarComision()){ toast('No podés cambiar comisiones'); return; }
+  const p=byId(DB.profesionales,pid); if(!p) return;
+  const valor=document.getElementById('pcom').value.trim(), pct=Number(valor);
+  if(valor==='' || !Number.isFinite(pct) || pct<0 || pct>100){
+    toast('Indicá una comisión entre 0 y 100'); return;
+  }
+  const anterior=p.comision;
+  p.comision=pct;
+  DB.visitas.forEach(v=>v.lineas.forEach(l=>{
+    if(l.profId===pid && ['res','conf','lleg'].includes(l.estado) &&
+      l.comisionAuto===true && !l.liqId)
+      l.comisionPct=pct;
+  }));
+  logAcc(`Comisión habitual de ${p.nombre}: ${anterior==null?'sin definir':anterior+'%'} → ${pct}%`);
+  save(); closeSheet(); render(); toast('Comisión guardada');
+  setTimeout(()=>verProfesional(pid),200);
 }
 function borrarProfesional(pid){
   if(!puedeEditarEquipo()){ toast('Dar de baja a alguien lo hace administración'); return; }
@@ -5594,19 +5659,14 @@ function editarAsignacion(asId){
         <div class="g"><b>${esc(s.nombre)}</b><span class="small muted">${s.dur} min · ${money(s.contado)}</span></div></div>`).join('')}
     </div>
 
-    <div class="f" style="margin-top:13px"><label>Comisión propia en esta área (dejalo vacío para usar la de cada servicio)</label>
-      <input type="number" id="acom" value="${as.comision!=null?as.comision:''}" placeholder="Usa la de cada servicio" inputmode="numeric"></div>
-
     <button class="btn" onclick="guardarAsignacion('${asId}')">Guardar</button>
     ${perm('equipo')==='todo'?`<button class="btn dan" style="margin-top:8px" onclick="quitarAsignacion('${asId}')">Sacarla de esta área</button>`:''}`);
 }
 function guardarAsignacion(asId){
+  if(!['todo','area'].includes(perm('equipo'))){ toast('No podés cambiar estos servicios'); return; }
   const as = byId(DB.asign, asId);
-  const cm = document.getElementById('acom').value;
-  if(cm!=='' && (+cm>100 || +cm<0)){ toast('La comisión tiene que estar entre 0 y 100'); return; }
   as.servicios = [...document.querySelectorAll('.asv:checked')].map(x=>x.value);
-  as.comision = cm===''?null:+cm;
-  logAcc(`Servicios y comisión: ${byId(DB.profesionales,as.profId).nombre} en ${byId(DB.areas,as.areaId).nombre}`);
+  logAcc(`Servicios habilitados: ${byId(DB.profesionales,as.profId).nombre} en ${byId(DB.areas,as.areaId).nombre}`);
   save(); closeSheet(); render(); toast('Guardado');
 }
 function quitarAsignacion(asId){
@@ -5820,9 +5880,8 @@ function hacerReubicar(pid, fecha, destId, motivo){
     }
     l.profId = destId;
     /* la comisión la cobra quien EFECTIVAMENTE hace el servicio */
-    const as = DB.asign.find(a=>a.profId===destId && a.areaId===l.areaId);
-    const sv = byId(DB.servicios, l.servicioId);
-    l.comisionPct = (as && as.comision!=null) ? as.comision : (sv?sv.comision:l.comisionPct);
+    l.comisionPct = comisionPctPara(destId,l.areaId,l.servicioId);
+    l.comisionAuto = true;
     movidos++;
   });
   logAcc(`${movidos} turnos de ${p.nombre} pasaron a ${d.nombre} el ${fechaCorta(fecha)}${motivo?' — '+motivo:''}`);
@@ -8303,7 +8362,7 @@ function vServicios(){
         <div class="lr">
           <button class="g" style="text-align:left" onclick="editarServicio('${s.id}')">
             <b>${esc(s.nombre)}${s.activo?'':' <span class="bd">Inactivo</span>'}</b>
-            <span>${q?esc(((byId(DB.areas,s.areaId)||{}).nombre)||'')+' · ':''}${s.dur} min${s.proceso>0?` · ${s.trabajo1}′+${s.proceso}′+${s.trabajo2}′`:''} · comisión ${s.comision}%${s.simult>1?' · hasta '+s.simult:''}${s.precioManual?' · precio fijo':''}</span></button>
+            <span>${q?esc(((byId(DB.areas,s.areaId)||{}).nombre)||'')+' · ':''}${s.dur} min${s.proceso>0?` · ${s.trabajo1}′+${s.proceso}′+${s.trabajo2}′`:''}${s.simult>1?' · hasta '+s.simult:''}${s.precioManual?' · precio fijo':''}</span></button>
           <button class="r" onclick="precioRapido('${s.id}')">
             <b style="color:var(--acc);font-size:15px">${money(s.contado)}</b><br>
             <span class="tiny">${money(precioLista(s.contado))} con recargo</span></button>
@@ -8316,10 +8375,8 @@ function editarServicio(id){
   const g = (k,d) => s?s[k]:d;
   sheet(s?'Editar servicio':'Servicio nuevo', `
     <div class="f"><label>Nombre</label><input id="sn" value="${s?esc(s.nombre):''}" placeholder="Kapping"></div>
-    <div class="row f">
-      <div><label>Precio de contado</label><input type="number" id="sc" value="${g('contado','')}" inputmode="numeric"></div>
-      <div><label>Comisión %</label><input type="number" id="sk" value="${g('comision',45)}" inputmode="numeric"></div>
-    </div>
+    <div class="f"><label>Precio de contado</label><input type="number" id="sc" value="${g('contado','')}" inputmode="numeric"></div>
+    <div class="small muted" style="margin-bottom:11px">La comisión se configura en la ficha de cada profesional, en Equipo.</div>
     <div id="prev" class="okbox"></div>
     <div class="h3" style="margin-top:6px">Tiempos</div>
     <div class="row f">
@@ -8364,18 +8421,13 @@ function guardarServicio(id){
   const v=k=>+document.getElementById(k).value||0;
   const dur = v('s1')+v('s2')+v('s3');
   if(dur<=0){ toast('El servicio tiene que durar al menos unos minutos'); return; }
-  if(v('sk')>100 || v('sk')<0){
-    return confirmarConMotivo('Revisá la comisión',
-      [`Pusiste ${v('sk')}% de comisión. Más de 100% significa pagarle a la profesional más de lo que cobra el negocio.`],
-      'Guardarlo igual', m=>guardarServicioYa(id, m));
-  }
   guardarServicioYa(id, '');
 }
 function guardarServicioYa(id, motivo){
   if(!puedeConfig()){ toast('No tenés acceso a la configuración'); return; }
   const n=document.getElementById('sn').value.trim();
   const v=k=>+document.getElementById(k).value||0;
-  const datos = {nombre:n, contado:v('sc'), comision:v('sk'),
+  const datos = {nombre:n, contado:v('sc'),
     trabajo1:v('s1'), proceso:v('s2'), trabajo2:v('s3'),
     dur:v('s1')+v('s2')+v('s3'), simult:Math.max(1,v('ss'))};
   const man = document.getElementById('sm').checked;
@@ -8386,7 +8438,7 @@ function guardarServicioYa(id, motivo){
     const s=byId(DB.servicios,id); Object.assign(s, datos); s.precioManual=man;
     const sa=document.getElementById('sa'); if(sa) s.activo=sa.checked;
   }else{
-    const s = {id:uid('sv'), areaId:ST.areaId, ...datos, precioManual:man, activo:true};
+    const s = {id:uid('sv'), areaId:ST.areaId, comision:0, ...datos, precioManual:man, activo:true};
     DB.servicios.push(s);
     /* todas las profesionales del área ELEGIDA quedan habilitadas */
     DB.asign.filter(a=>a.areaId===s.areaId).forEach(a=>a.servicios.push(s.id));
@@ -9021,7 +9073,7 @@ render();
    Julián actualizaba y no veía los cambios. Cada vez que se abre,
    la app se fija sola si hay una más nueva y se recarga.
    ============================================================ */
-const VERSION_ISIS = 12;
+const VERSION_ISIS = 13;
 async function mirarSiHayNueva(){
   if(location.protocol === 'file:') return;
   try{
