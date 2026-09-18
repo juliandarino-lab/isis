@@ -487,6 +487,7 @@ label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:0 0
 .fr .fder{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex:0 0 auto}
 .fr.sigue{background:var(--freebg);border-radius:9px}
 .fr.trabada{opacity:.62}
+.fr .g b .chipsigue, .fr .g .chipsigue{color:#fff}
 .chipsigue{display:inline-block;margin-left:7px;background:var(--freetx);color:#fff;
   font-size:10px;font-weight:800;letter-spacing:.5px;padding:2px 6px;border-radius:6px;
   vertical-align:middle}
@@ -1785,6 +1786,10 @@ function ataduras(tipo, id){
   }
   if(tipo==='area'){
     n(DB.visitas.reduce((t,v)=>t+v.lineas.filter(l=>l.areaId===id).length,0),'turno','turnos');
+    const svsAr=DB.servicios.filter(x=>x.areaId===id).map(x=>x.id);
+    n(DB.paquetes.filter(p=>svsAr.includes(p.servicioId)).length,'paquete','paquetes');
+    n(DB.vouchers.filter(v=>(v.servicios||[]).some(x=>svsAr.includes(x))).length,'voucher','vouchers');
+    n(DB.espera.filter(e=>svsAr.includes(e.servicioId)).length,'anotacion en la lista de espera','anotaciones en la lista de espera');
     n(DB.usuarios.filter(u=>areasDeUsuario(u).includes(id)).length,'usuario que la supervisa','usuarios que la supervisan');
   }
   if(tipo==='servicio'){
@@ -3494,9 +3499,10 @@ function abrirTurno(visitaId, lineaId){
     </div>`);
 }
 function msgConfirmacion(v,l){
-  const cl=byId(DB.clientas,v.clientaId), sv=byId(DB.servicios,l.servicioId);
-  const pr=byId(DB.profesionales,l.profId), su=byId(DB.sucursales,v.sucursalId);
-  return `Hola ${cl.nombre.split(' ')[0]}! Te recordamos tu turno en ${DB.cfg.negocio} ${su.nombre}: ${sv.nombre} con ${pr.nombre.split(' ')[0]}, el ${fechaLarga(v.fecha)} a las ${l.hora}. ¿Nos confirmás?`;
+  const cl=byId(DB.clientas,v.clientaId)||{nombre:''}, sv=byId(DB.servicios,l.servicioId)||{nombre:'tu turno'};
+  const pr=byId(DB.profesionales,l.profId), su=byId(DB.sucursales,v.sucursalId)||{nombre:''};
+  const conQuien = pr ? ` con ${pr.nombre.split(' ')[0]}` : '';
+  return `Hola ${(cl.nombre||'').split(' ')[0]}! Te recordamos tu turno en ${DB.cfg.negocio} ${su.nombre}: ${sv.nombre}${conQuien}, el ${fechaLarga(v.fecha)} a las ${l.hora}. ¿Nos confirmás?`;
 }
 function cambiarEstado(vid,lid,est,desdeFicha){
   const v=byId(DB.visitas,vid), l=byId(v.lineas,lid);
@@ -4001,7 +4007,7 @@ function guardarTurno(){
 function turnoCargado(vid, lid){
   const v=byId(DB.visitas,vid); if(!v) return;
   const l=byId(v.lineas,lid);
-  const cl=byId(DB.clientas,v.clientaId), sv=byId(DB.servicios,l.servicioId);
+  const cl=byId(DB.clientas,v.clientaId)||{nombre:'', tel:''}, sv=byId(DB.servicios,l.servicioId)||{nombre:''};
   sheet('Turno cargado', `
     <div class="okbox">${esc(cl.nombre)} · ${esc(sv.nombre)} · ${fechaCorta(v.fecha)} a las ${l.hora}</div>
     ${l.forzado?`<div class="warnbox">${ic('alert','sm')} Forzado: ${esc(l.forzado)}</div>`:''}
@@ -4804,8 +4810,9 @@ function vClientas(){
   const res = clientasVisibles().filter(c=>!t || c.nombre.toLowerCase().includes(t) || c.tel.includes(t));
   return `<div class="pad">
     ${perm('clientas')==='prop'?`<div class="infobox">Estas son las clientas que atendiste vos.</div>`:''}
-    <div class="f"><input placeholder="Buscar clienta" value="${esc(ST.q)}"
-      oninput="ST.q=this.value;render()" autocomplete="off"></div>
+    <div class="f"><input id="bcl" placeholder="Buscar clienta" value="${esc(ST.q)}"
+      autocomplete="off"
+      oninput="ST.q=this.value;render();const e=document.getElementById('bcl');if(e){e.focus();e.setSelectionRange(e.value.length,e.value.length);}"></div>
     ${puedeEditarClientas()?`<button class="btn sec" style="margin-bottom:13px" onclick="nuevaClientaFull()">${ic('plus','sm')} Clienta nueva</button>`:''}
     <div class="listcard">${res.length?res.map(c=>{
       const vs = DB.visitas.filter(v=>v.clientaId===c.id).map(v=>v.fecha).sort();
@@ -7216,6 +7223,7 @@ function datosInforme(desde, hasta, sid){
       const ar = byId(DB.areas, l.areaId) || {};
       reng.push({fecha:v.fecha, hora:l.hora||'', clienta:cl?cl.nombre:'—',
         servicio:sv.nombre||'', prof:pr.nombre||'', area:ar.nombre||'',
+        com: comisionLinea(l),
         estado:l.estado, sinTurno:!!v.sinTurno,
         importe: v.lineas.length===1 ? cobrado : (l.precio-(l.descuento||0)),
         medio: (MEDIOS.find(x=>x.k===medio)||{}).n || ''});
@@ -7242,19 +7250,22 @@ function datosInforme(desde, hasta, sid){
     .sort((a,b)=>(a.fecha+a.hora).localeCompare(b.fecha+b.hora));
 
   /* cuánto hizo cada profesional */
-  const porProf = {};
+  const porProf = {}, porArea = {};
   reng.filter(r=>r.estado==='fin').forEach(r=>{
-    const p = porProf[r.prof] = porProf[r.prof] || {n:r.prof, cant:0, plata:0};
-    p.cant++; p.plata += r.importe;
+    const p = porProf[r.prof] = porProf[r.prof] || {n:r.prof, cant:0, plata:0, com:0};
+    p.cant++; p.plata += r.importe; p.com += (r.com||0);
+    const a = porArea[r.area] = porArea[r.area] || {n:r.area||'—', cant:0, plata:0};
+    a.cant++; a.plata += r.importe;
   });
   const profs = Object.values(porProf).sort((a,b)=>b.plata-a.plata);
+  const areas = Object.values(porArea).sort((a,b)=>b.plata-a.plata);
 
   /* el arqueo, solo si es un día solo */
   const unDia = desde===hasta;
   const arq = unDia ? arqueoDe(desde, sid) : null;
 
   return {suc, desde, hasta, unDia, arq, medios, entro, salio,
-    conTurno, sinTurno, manana, tarde, egresos, tocado, profs,
+    conTurno, sinTurno, manana, tarde, egresos, tocado, profs, areas,
     cancelados: reng.length, noVinieron: vis.reduce((s,v)=>
       s + v.lineas.filter(l=>l.estado==='no').length, 0)};
 }
@@ -7263,182 +7274,190 @@ function datosInforme(desde, hasta, sid){
 function pdfInforme(d){
   const H = PDFHoja();
   const M = H.margen, AN = H.ancho - M*2, X2 = H.ancho - M;
+  const TINTA=[.1,.1,.14], GRIS=[.46,.46,.52], SUAVE=[.32,.32,.38],
+        ROJO=[.62,.09,.12], VERDE=[0,.42,.22];
   const tit = d.unDia ? ('Cierre del '+fechaLarga(d.desde))
                       : ('Informe del '+fechaCorta(d.desde)+' al '+fechaCorta(d.hasta));
   H.encTxt = 'ISIS · '+d.suc.nombre+' · '+tit;
   H.pieTxt = 'ISIS · '+d.suc.nombre+' · emitido el '+fechaCorta(hoy())+' a las '+horaAhora();
 
-  /* ---- encabezado ---- */
-  H.caja(M, H.y-46, AN, 46, [.13,.13,.16]);
-  H.texto('ISIS', M+12, H.y-21, 15, true, [1,1,1]);
-  H.texto(d.suc.nombre, M+58, H.y-21, 11, false, [.85,.85,.9]);
-  H.texto(tit, M+12, H.y-37, 10.5, false, [.85,.85,.9]);
-  H.y -= 62;
+  /* ---------- encabezado ---------- */
+  H.caja(M, H.y-56, AN, 56, [.11,.11,.14]);
+  H.texto('ISIS', M+16, H.y-26, 17, true, [1,1,1]);
+  H.texto((d.suc.nombre||'').toUpperCase(), M+70, H.y-26, 9.5, false, [.68,.68,.78]);
+  H.texto(tit, M+16, H.y-44, 10.5, false, [.88,.88,.93]);
+  H.y -= 76;
 
-  const kv = (et, val, negrita, color) => {
-    H.lugar(18);
-    H.texto(et, M+2, H.y, 9.5, false, [.3,.3,.3]);
-    H.der(val, X2-2, H.y, negrita?10.5:9.5, !!negrita, color);
-    H.y -= 15;
-  };
-  const titulo = (t) => {
-    H.lugar(40);
-    H.y -= 8;
-    H.texto(t.toUpperCase(), M, H.y, 9, true, [.1,.1,.15]);
-    H.y -= 5; H.linea(M, H.y, X2, H.y, .75, .8); H.y -= 14;
-  };
+  const CA = (AN-24)/2;                    /* ancho de cada columna */
+  const xI = M,        rI = M+CA;          /* columna izquierda */
+  const xD = M+CA+24,  rD = X2;            /* columna derecha */
 
-  /* ---- la plata ---- */
-  titulo(d.unDia ? 'El cierre' : 'Resumen');
+  const seccion = (t, x, an, y) => {
+    H.texto(String(t).toUpperCase(), x, y, 8, true, GRIS);
+    H.linea(x, y-6, x+an, y-6, .72, .8);
+    return y-19;
+  };
+  const kv = (et, val, x, xr, y, neg, color) => {
+    H.texto(et, x, y, 9.2, false, neg?TINTA:SUAVE);
+    H.der(String(val), xr, y, neg?10:9.2, !!neg, color||TINTA);
+    return y-14;
+  };
+  const raya = (x, an, y) => { H.linea(x, y+9, x+an, y+9, .8, .7); return y; };
+
+  /* ---------- izquierda: la plata ---------- */
+  let yI = seccion(d.unDia?'El cierre':'Resumen', xI, CA, H.y);
   if(d.arq){
-    kv('Arrancó con', money(d.arq.fondo));
-    kv('Entró en el día', money(d.arq.entra));
-    kv('Salió en el día', '− '+money(d.arq.sale));
-    kv('Entró en efectivo', money(d.arq.efeIn));
-    kv('Salió en efectivo', '− '+money(d.arq.efeOut));
-    H.linea(M, H.y+8, X2, H.y+8, .85);
-    kv('Tenía que haber en el cajón', money(d.arq.esperado), true);
+    yI = kv('Arrancó con', money(d.arq.fondo), xI, rI, yI);
+    yI = kv('Entró', money(d.arq.entra), xI, rI, yI);
+    yI = kv('Salió', '− '+money(d.arq.sale), xI, rI, yI);
+    yI = kv('En efectivo entró', money(d.arq.efeIn), xI, rI, yI);
+    yI = kv('En efectivo salió', '− '+money(d.arq.efeOut), xI, rI, yI);
+    yI = raya(xI, CA, yI);
+    yI = kv('Tenía que haber en el cajón', money(d.arq.esperado), xI, rI, yI, true);
     if(d.arq.cierre){
-      kv('Se contó', money(d.arq.contado), true);
+      yI = kv('Se contó', money(d.arq.contado), xI, rI, yI, true);
       const dif = d.arq.diferencia || 0;
-      kv(dif===0?'Diferencia':(dif>0?'SOBRÓ':'FALTÓ'),
-         dif===0?'cierra justo':money(Math.abs(dif)), true,
-         dif===0?[0,.45,.2]:[.75,.1,.1]);
-      if(d.arq.cierre.motivo) kv('Motivo de la diferencia', d.arq.cierre.motivo);
-      kv('Queda de fondo para mañana', money(d.arq.cierre.fondoQueda||0));
-      kv('Cerró', (d.arq.cierre.usuario||'—')+' a las '+(d.arq.cierre.hora||''));
+      yI = kv(dif===0?'Diferencia':(dif>0?'Sobró':'Faltó'),
+              dif===0?'cierra justo':money(Math.abs(dif)),
+              xI, rI, yI, true, dif===0?VERDE:ROJO);
+      if(d.arq.cierre.motivo)
+        yI = kv('Motivo', pdfCortar(d.arq.cierre.motivo, 9.2, CA*0.55), xI, rI, yI);
+      yI = kv('Queda de fondo', money(d.arq.cierre.fondoQueda||0), xI, rI, yI);
+      yI = kv('Cerró', pdfCortar((d.arq.cierre.usuario||'—')+'  '+(d.arq.cierre.hora||''),
+              9.2, CA*0.55), xI, rI, yI);
     } else {
-      kv('Estado', 'la caja quedó ABIERTA', true, [.75,.1,.1]);
+      yI = kv('Estado', 'LA CAJA QUEDÓ ABIERTA', xI, rI, yI, true, ROJO);
     }
   } else {
-    kv('Entró', money(d.entro), true);
-    kv('Salió', '− '+money(d.salio), true);
-    H.linea(M, H.y+8, X2, H.y+8, .85);
-    kv('Queda', money(d.entro-d.salio), true);
+    yI = kv('Entró', money(d.entro), xI, rI, yI, true);
+    yI = kv('Salió', '− '+money(d.salio), xI, rI, yI, true);
+    yI = raya(xI, CA, yI);
+    yI = kv('Queda', money(d.entro-d.salio), xI, rI, yI, true);
   }
 
-  /* ---- por medio de pago ---- */
-  titulo('Por medio de pago');
-  const cMed = [M+2, M+250, M+380, X2-2];
-  H.texto('Medio', cMed[0], H.y, 8.5, true, [.4,.4,.4]);
-  H.der('Entró', cMed[2], H.y, 8.5, true, [.4,.4,.4]);
-  H.der('Salió', cMed[3], H.y, 8.5, true, [.4,.4,.4]);
-  H.y -= 13;
+  yI -= 10;
+  yI = seccion('Por medio de pago', xI, CA, yI);
+  H.texto('Medio', xI, yI, 8, true, GRIS);
+  H.der('Entró', rI-66, yI, 8, true, GRIS);
+  H.der('Salió', rI, yI, 8, true, GRIS);
+  yI -= 13;
   d.medios.forEach(m=>{
-    H.lugar(16);
-    H.texto(m.n, cMed[0], H.y, 9.5);
-    H.der(m.entra?money(m.entra):'—', cMed[2], H.y, 9.5);
-    H.der(m.sale?('− '+money(m.sale)):'—', cMed[3], H.y, 9.5);
-    H.y -= 14;
+    H.texto(pdfCortar(m.n, 9.2, CA-150), xI, yI, 9.2);
+    H.der(m.entra?money(m.entra):'—', rI-66, yI, 9.2);
+    H.der(m.sale?('− '+money(m.sale)):'—', rI, yI, 9.2);
+    yI -= 13.5;
   });
-  H.linea(M, H.y+8, X2, H.y+8, .85);
-  H.texto('TOTAL', cMed[0], H.y, 9.5, true);
-  H.der(money(d.entro), cMed[2], H.y, 9.5, true);
-  H.der('− '+money(d.salio), cMed[3], H.y, 9.5, true);
-  H.y -= 16;
+  yI = raya(xI, CA, yI);
+  H.texto('Total', xI, yI, 9.2, true);
+  H.der(money(d.entro), rI-66, yI, 9.2, true);
+  H.der('− '+money(d.salio), rI, yI, 9.2, true);
+  yI -= 16;
 
-  /* ---- una tabla de atenciones ---- */
-  const tablaAt = (tit2, filas, conFecha) => {
-    if(!filas.length) return;
-    titulo(tit2+'  ·  '+filas.length);
-    const x = conFecha
-      ? {a:M+2, b:M+56, c:M+96, d:M+240, e:M+352, f:X2-2}
-      : {a:M+2, b:M+2,  c:M+44, d:M+188, e:M+330, f:X2-2};
-    H.texto(conFecha?'Día':'', x.a, H.y, 8.5, true, [.4,.4,.4]);
-    H.texto('Hora', x.b===x.a?x.c-42:x.b, H.y, 8.5, true, [.4,.4,.4]);
-    H.texto('Clienta', x.c, H.y, 8.5, true, [.4,.4,.4]);
-    H.texto('Servicio', x.d, H.y, 8.5, true, [.4,.4,.4]);
-    H.texto('Profesional', x.e, H.y, 8.5, true, [.4,.4,.4]);
-    H.der('Cobrado', x.f, H.y, 8.5, true, [.4,.4,.4]);
-    H.y -= 12;
-    let suma = 0, alt = false;
-    filas.forEach(r=>{
-      H.lugar(16);
-      if(alt) H.caja(M, H.y-4, AN, 14, [.965,.965,.975]);
-      alt = !alt;
-      if(conFecha) H.texto(fechaCorta(r.fecha).slice(0,6), x.a, H.y, 8.5, false, [.4,.4,.4]);
-      H.texto(r.hora, x.b===x.a?x.c-42:x.b, H.y, 8.5);
-      H.texto(pdfCortar(r.clienta, 8.5, x.d-x.c-6), x.c, H.y, 8.5);
-      H.texto(pdfCortar(r.servicio, 8.5, x.e-x.d-6), x.d, H.y, 8.5);
-      H.texto(pdfCortar((r.prof||'').split(' ')[0], 8.5, 62), x.e, H.y, 8.5);
-      const et = r.estado==='fin' ? money(r.importe)
-               : r.estado==='no' ? 'no vino' : EST[r.estado] ? EST[r.estado].n.toLowerCase() : '';
-      H.der(et, x.f, H.y, 8.5, r.estado==='fin', r.estado==='fin'?null:[.55,.55,.55]);
-      if(r.estado==='fin') suma += r.importe;
-      H.y -= 14;
-    });
-    H.linea(M, H.y+8, X2, H.y+8, .85);
-    H.texto('Subtotal', x.a, H.y, 9, true);
-    H.der(money(suma), x.f, H.y, 9, true);
-    H.y -= 16;
-  };
-
-  const vf = !d.unDia;
-  tablaAt('Turnos agendados', d.conTurno, vf);
+  /* ---------- derecha: el día y lo que salió ---------- */
+  const servFin = d.profs.reduce((t,p)=>t+p.cant, 0);
+  const comTot  = d.profs.reduce((t,p)=>t+(p.com||0), 0);
+  let yD = seccion('El día en números', xD, CA, H.y);
+  yD = kv('Turnos agendados', d.conTurno.length, xD, rD, yD);
+  yD = kv('Por orden de llegada', d.sinTurno.length, xD, rD, yD);
   if(d.unDia){
-    tablaAt('Por orden de llegada · turno mañana', d.manana, false);
-    tablaAt('Por orden de llegada · turno tarde', d.tarde, false);
-  } else {
-    tablaAt('Por orden de llegada', d.sinTurno, true);
+    yD = kv('    turno mañana', d.manana.length, xD, rD, yD);
+    yD = kv('    turno tarde', d.tarde.length, xD, rD, yD);
   }
+  yD = kv('No vinieron', d.noVinieron, xD, rD, yD);
+  yD = raya(xD, CA, yD);
+  yD = kv('Servicios terminados', servFin, xD, rD, yD, true);
+  yD = kv('Comisiones del día', money(comTot), xD, rD, yD, true);
 
-  /* ---- lo que salió ---- */
+  yD -= 10;
+  yD = seccion('Lo que salió', xD, CA, yD);
   if(d.egresos.length){
-    titulo('Lo que salió');
     d.egresos.forEach(g=>{
-      H.lugar(16);
-      H.texto((d.unDia?'':fechaCorta(g.fecha).slice(0,6)+'  ')+(g.hora||''), M+2, H.y, 8.5, false, [.4,.4,.4]);
-      H.texto(pdfCortar(nombreMov(g)+(g.concepto?' · '+g.concepto:''), 8.5, 230), M+70, H.y, 8.5);
-      H.texto((MEDIOS.find(x=>x.k===g.medio)||{}).n||'', M+310, H.y, 8.5, false, [.4,.4,.4]);
-      H.texto(pdfCortar(g.usuario||'', 8.5, 70), M+385, H.y, 8.5, false, [.4,.4,.4]);
-      H.der('− '+money(g.importe), X2-2, H.y, 8.5, true, [.6,.1,.1]);
-      H.y -= 14;
+      H.texto(pdfCortar(nombreMov(g)+(g.concepto?' · '+g.concepto:''), 8.8, CA-80), xD, yD, 8.8);
+      H.der('− '+money(g.importe), rD, yD, 8.8, true, ROJO);
+      yD -= 10.5;
+      H.texto(pdfCortar([((MEDIOS.find(x=>x.k===g.medio)||{}).n||''),
+        (g.usuario||''), (d.unDia?((g.hora&&g.hora!=='00:00')?g.hora:''):fechaCorta(g.fecha))]
+        .filter(Boolean).join(' · '), 7.6, CA), xD+8, yD, 7.6, false, GRIS);
+      yD -= 13;
     });
-    H.linea(M, H.y+8, X2, H.y+8, .85);
-    H.texto('Total que salió', M+2, H.y, 9, true);
-    H.der('− '+money(d.salio), X2-2, H.y, 9, true);
-    H.y -= 16;
+    yD = raya(xD, CA, yD);
+    H.texto('Total que salió', xD, yD, 9.2, true);
+    H.der('− '+money(d.salio), rD, yD, 9.2, true);
+    yD -= 16;
+  } else {
+    H.texto('No salió plata.', xD, yD, 9.2, false, GRIS);
+    yD -= 16;
   }
 
-  /* ---- anulaciones y correcciones ---- */
-  if(d.tocado.length){
-    titulo('Anulaciones y correcciones');
-    d.tocado.forEach(m=>{
-      H.lugar(16);
-      H.texto((d.unDia?'':fechaCorta(m.fecha).slice(0,6)+'  ')+(m.hora||''), M+2, H.y, 8.5, false, [.4,.4,.4]);
-      H.texto(pdfCortar(nombreMov(m)+(m.concepto?' · '+m.concepto:''), 8.5, 200), M+70, H.y, 8.5);
-      H.texto(pdfCortar(m.motivo||'sin motivo', 8.5, 140), M+290, H.y, 8.5, false, [.45,.45,.45]);
-      H.texto(pdfCortar(m.usuario||'', 8.5, 70), M+435, H.y, 8.5, false, [.4,.4,.4]);
-      H.y -= 14;
-    });
-    H.y -= 4;
-  }
+  /* ---------- las dos columnas terminaron ---------- */
+  H.y = Math.min(yI, yD) - 8;
 
-  /* ---- cada profesional ---- */
+  /* ---------- cada profesional, con su comisión ---------- */
   if(d.profs.length){
-    titulo('Lo que hizo cada profesional');
-    H.texto('Profesional', M+2, H.y, 8.5, true, [.4,.4,.4]);
-    H.der('Servicios', M+330, H.y, 8.5, true, [.4,.4,.4]);
-    H.der('Generó', X2-2, H.y, 8.5, true, [.4,.4,.4]);
-    H.y -= 13;
-    d.profs.forEach(p=>{
-      H.lugar(16);
-      H.texto(pdfCortar(p.n, 9.5, 260), M+2, H.y, 9.5);
-      H.der(String(p.cant), M+330, H.y, 9.5);
-      H.der(money(p.plata), X2-2, H.y, 9.5);
-      H.y -= 14;
+    H.y = seccion('Lo que hizo cada profesional', M, AN, H.y);
+    const cS = M+330, cG = M+420, cC = X2;
+    H.texto('Profesional', M, H.y, 8, true, GRIS);
+    H.der('Servicios', cS, H.y, 8, true, GRIS);
+    H.der('Generó', cG, H.y, 8, true, GRIS);
+    H.der('Comisión a pagar', cC, H.y, 8, true, GRIS);
+    H.y -= 14;
+    d.profs.forEach((p,i)=>{
+      H.lugar(22);
+      if(i%2) H.caja(M-5, H.y-4.5, AN+10, 16, [.962,.962,.975]);
+      H.texto(pdfCortar(p.n, 9.4, 300), M, H.y, 9.4);
+      H.der(String(p.cant), cS, H.y, 9.4, false, SUAVE);
+      H.der(money(p.plata), cG, H.y, 9.4, false, SUAVE);
+      H.der(money(p.com||0), cC, H.y, 9.4, true);
+      H.y -= 16;
     });
-    H.y -= 4;
+    H.y = raya(M, AN, H.y);
+    H.texto('Total', M, H.y, 9.4, true);
+    H.der(String(servFin), cS, H.y, 9.4, true);
+    H.der(money(d.profs.reduce((t,p)=>t+p.plata,0)), cG, H.y, 9.4, true);
+    H.der(money(comTot), cC, H.y, 9.4, true);
+    H.y -= 20;
   }
 
-  /* ---- la firma ---- */
-  H.lugar(70);
-  H.y -= 16;
-  H.linea(M, H.y, M+190, H.y, .6, .8);
-  H.linea(X2-190, H.y, X2, H.y, .6, .8);
+  /* ---------- por área ---------- */
+  if(d.areas.length){
+    H.y = seccion('Por área', M, AN, H.y);
+    const aS = M+330, aG = X2;
+    H.texto('Área', M, H.y, 8, true, GRIS);
+    H.der('Servicios', aS, H.y, 8, true, GRIS);
+    H.der('Generó', aG, H.y, 8, true, GRIS);
+    H.y -= 14;
+    d.areas.forEach(a=>{
+      H.lugar(20);
+      H.texto(pdfCortar(a.n, 9.4, 300), M, H.y, 9.4);
+      H.der(String(a.cant), aS, H.y, 9.4, false, SUAVE);
+      H.der(money(a.plata), aG, H.y, 9.4);
+      H.y -= 14;
+    });
+    H.y -= 6;
+  }
+
+  /* ---------- lo que se anuló o se corrigió: tiene que estar a la vista ---------- */
+  if(d.tocado.length){
+    H.y = seccion('Anulaciones y correcciones  ·  '+d.tocado.length, M, AN, H.y);
+    d.tocado.forEach(m=>{
+      H.lugar(20);
+      H.texto((d.unDia?(m.hora||''):fechaCorta(m.fecha)), M, H.y, 8.6, false, GRIS);
+      H.texto(pdfCortar(nombreMov(m)+(m.concepto?' · '+m.concepto:''), 8.6, 180), M+58, H.y, 8.6);
+      H.texto(pdfCortar(m.motivo||'sin motivo', 8.6, 150), M+250, H.y, 8.6, false, GRIS);
+      H.der(pdfCortar(m.usuario||'', 8.6, 110), X2, H.y, 8.6, false, GRIS);
+      H.y -= 13;
+    });
+    H.y -= 6;
+  }
+
+  /* ---------- la firma, siempre al pie de la última hoja ---------- */
+  H.lugar(64);
+  if(H.libre > 90) H.y = H.margen + 78;
+  H.linea(M, H.y, M+200, H.y, .62, .8);
+  H.linea(X2-200, H.y, X2, H.y, .62, .8);
   H.y -= 11;
-  H.texto('Quien cerró la caja', M, H.y, 8, false, [.45,.45,.45]);
-  H.der('Quien recibe la plata', X2, H.y, 8, false, [.45,.45,.45]);
+  H.texto('Quien cerró la caja', M, H.y, 8, false, GRIS);
+  H.der('Quien recibe la plata', X2, H.y, 8, false, GRIS);
 
   return pdfArmar(H);
 }
@@ -7978,15 +7997,16 @@ function vReportes(){
 function vConfig(){
   const sucA = byId(DB.sucursales, ST.sucursalId);
   return `<div class="pad">
-    ${sucA?`<div class="infobox">Todo lo que hay acá lo cambia la dueña o administración sin tocar nada más.
-      Los cambios salen andando en la agenda al instante.</div>`
-    :`<div class="warnbox">${ic('alert','sm')} <b>Empezá por acá: cargá la sucursal.</b>
-      Después las áreas, los servicios con su precio, las profesionales y sus horarios.</div>`}
+    ${pasosConfig()}
     <div class="listcard">
       ${sucA?`<button class="lr" onclick="go('areas')"><div class="g"><b>Áreas</b>
         <span>${DB.areas.filter(a=>a.sucursalId===ST.sucursalId).length} en ${esc(sucA.nombre)}</span></div>${ic('chev','sm')}</button>
       <button class="lr" onclick="go('servicios')"><div class="g"><b>Servicios y precios</b>
-        <span>${DB.servicios.filter(s=>(byId(DB.areas,s.areaId)||{}).sucursalId===ST.sucursalId).length} cargados</span></div>${ic('chev','sm')}</button>`:''}
+        <span>${DB.servicios.filter(s=>(byId(DB.areas,s.areaId)||{}).sucursalId===ST.sucursalId).length} cargados</span></div>${ic('chev','sm')}</button>
+      <button class="lr" onclick="go('equipo')"><div class="g"><b>Profesionales y horarios</b>
+        <span>${DB.profesionales.filter(p=>p.activa).length} cargadas · horarios de la semana</span></div>${ic('chev','sm')}</button>
+      ${hayOtroLocalCargado()?`<button class="lr" onclick="copiarLocal()"><div class="g"><b>Copiar de otro local</b>
+        <span>Traer las áreas y los servicios ya cargados en otra sucursal</span></div>${ic('chev','sm')}</button>`:''}`:''}
       <button class="lr" onclick="editarSucursales()"><div class="g"><b>Sucursales</b>
         <span>${DB.sucursales.length} cargadas</span></div>${ic('chev','sm')}</button>
       <button class="lr" onclick="editarRecargo()"><div class="g"><b>Recargo y redondeo</b>
@@ -8097,11 +8117,12 @@ function hacerCero(){
   const yo = usuario();
   const mio = {id: yo.id, nombre: yo.nombre, email: yo.email||'',
     rol: ['duena','admin'].includes(yo.rol) ? yo.rol : 'duena',
+    pin: yo.pin||null, pinSal: yo.pinSal||null, pinFallos:0, pinTrabaHasta:0,
     profId:null, sucursalId:null, areaId:null, areas:[], permisos:{}, activo:true};
   DB = {
     cfg: { negocio: DB.cfg.negocio, recargo: DB.cfg.recargo, redondeo: DB.cfg.redondeo,
       diasSinVenir: DB.cfg.diasSinVenir, permisos: JSON.parse(JSON.stringify(PERM_DEF)),
-      v: 4, fondoCaja: 0, pedirClave: !!DB.cfg.pedirClave, linkApp: DB.cfg.linkApp,
+      v: 4, fondoCaja: 0, pedirPin: !!DB.cfg.pedirPin, linkApp: DB.cfg.linkApp,
       presentado: true, ultimoUsuario: mio.id },
     sucursales:[], areas:[], servicios:[], profesionales:[], asign:[], horarios:[],
     bloqueos:[], clientas:[], visitas:[], espera:[], caja:[], gastos:[],
@@ -8261,22 +8282,32 @@ function dejarSinUsoArea(id){
 function vServicios(){
   const areas = DB.areas.filter(a=>a.sucursalId===ST.sucursalId && a.activa);
   if(!ST.areaId || !areas.find(a=>a.id===ST.areaId)) ST.areaId = areas[0]?.id;
-  const svs = DB.servicios.filter(s=>s.areaId===ST.areaId);
+  const q = (ST.qsv||'').trim().toLowerCase();
+  const svs = q
+    ? DB.servicios.filter(x=>areas.some(a=>a.id===x.areaId) && x.nombre.toLowerCase().includes(q))
+    : DB.servicios.filter(x=>x.areaId===ST.areaId);
   return `
     <div class="tabs" style="top:44px">
       ${areas.map(a=>`<button class="tab ${a.id===ST.areaId?'on':''}"
         onclick="ST.areaId='${a.id}';render()">${a.icono} ${esc(a.nombre)}</button>`).join('')}
     </div>
     <div class="pad">
+      <div class="f"><input id="bsv" placeholder="Buscar un servicio en todas las áreas"
+        value="${esc(ST.qsv||'')}" autocomplete="off"
+        oninput="ST.qsv=this.value;render();const e=document.getElementById('bsv');if(e){e.focus();e.setSelectionRange(e.value.length,e.value.length);}"></div>
       <button class="btn" style="margin-bottom:13px" onclick="editarServicio()">${ic('plus','sm')} Agregar servicio</button>
-      <div class="infobox">Un servicio nuevo queda habilitado para todas las profesionales del área.
-      Sale andando en la agenda al instante.</div>
+      <div class="infobox">Tocá el <b>precio</b> para cambiarlo ahí mismo. Tocá el <b>nombre</b> para
+      lo demás. Un servicio nuevo queda habilitado para todas las profesionales del área.</div>
+      ${q&&!svs.length?`<div class="warnbox">Ningún servicio se llama así.</div>`:''}
       <div class="listcard">${svs.map(s=>`
-        <button class="lr" onclick="editarServicio('${s.id}')">
-          <div class="g"><b>${esc(s.nombre)}${s.activo?'':' <span class="bd">Inactivo</span>'}</b>
-            <span>${s.dur} min${s.proceso>0?` · ${s.trabajo1}′+${s.proceso}′+${s.trabajo2}′`:''} · comisión ${s.comision}%${s.simult>1?' · hasta '+s.simult:''}${s.precioManual?' · precio fijo':''}</span></div>
-          <div class="r"><b>${money(s.contado)}</b><br><span class="tiny">${money(precioLista(s.contado))}</span></div>
-        </button>`).join('')}</div>
+        <div class="lr">
+          <button class="g" style="text-align:left" onclick="editarServicio('${s.id}')">
+            <b>${esc(s.nombre)}${s.activo?'':' <span class="bd">Inactivo</span>'}</b>
+            <span>${q?esc(((byId(DB.areas,s.areaId)||{}).nombre)||'')+' · ':''}${s.dur} min${s.proceso>0?` · ${s.trabajo1}′+${s.proceso}′+${s.trabajo2}′`:''} · comisión ${s.comision}%${s.simult>1?' · hasta '+s.simult:''}${s.precioManual?' · precio fijo':''}</span></button>
+          <button class="r" onclick="precioRapido('${s.id}')">
+            <b style="color:var(--acc);font-size:15px">${money(s.contado)}</b><br>
+            <span class="tiny">${money(precioLista(s.contado))} con recargo</span></button>
+        </div>`).join('')}</div>
     </div>`;
 }
 function editarServicio(id){
@@ -8306,12 +8337,14 @@ function editarServicio(id){
       <div class="g"><b>Precio fijado a mano</b>
       <span class="small muted">Los aumentos generales no le tocan el precio a este servicio</span></div></div>
     <div class="f"><label>¿En qué área está?</label>
-      <select id="sar">${DB.areas.filter(a=>a.activa).map(a=>{const su=byId(DB.sucursales,a.sucursalId);
+      <select id="sar">${DB.areas.filter(a=>a.activa && a.sucursalId===(s?(byId(DB.areas,s.areaId)||{}).sucursalId:ST.sucursalId)).map(a=>{const su=byId(DB.sucursales,a.sucursalId);
         return `<option value="${a.id}" ${(s?s.areaId:ST.areaId)===a.id?'selected':''}>${a.icono} ${esc(a.nombre)} · ${esc(su?su.nombre:'')}</option>`;}).join('')}</select></div>
     ${s?`<div class="chk"><input type="checkbox" id="sa" ${s.activo?'checked':''}>
       <div class="g"><b>Servicio en uso</b><span class="small muted">Si lo destildás deja de aparecer, pero el historial queda</span></div></div>`:''}
     <button class="btn" style="margin-top:13px" onclick="guardarServicio('${id||''}')">Guardar</button>
-    ${s?`<button class="btn dan" style="margin-top:8px" onclick="borrarServicio('${id}')">${ic('trash','sm')} Borrar este servicio</button>`:''}`,
+    ${s?`<button class="btn sec" style="margin-top:8px" onclick="duplicarServicio('${id}')">
+      ${ic('plus','sm')} Duplicar este servicio</button>
+    <button class="btn dan" style="margin-top:8px" onclick="borrarServicio('${id}')">${ic('trash','sm')} Borrar este servicio</button>`:''}`,
     {focus:'sn'});
   setTimeout(()=>{ recalcDur(); const c=document.getElementById('sc'); if(c) c.oninput=recalcDur; recalcDur(); },50);
 }
@@ -8355,8 +8388,8 @@ function guardarServicioYa(id, motivo){
   }else{
     const s = {id:uid('sv'), areaId:ST.areaId, ...datos, precioManual:man, activo:true};
     DB.servicios.push(s);
-    /* todas las profesionales del área quedan habilitadas */
-    DB.asign.filter(a=>a.areaId===ST.areaId).forEach(a=>a.servicios.push(s.id));
+    /* todas las profesionales del área ELEGIDA quedan habilitadas */
+    DB.asign.filter(a=>a.areaId===s.areaId).forEach(a=>a.servicios.push(s.id));
   }
   logAcc(`Servicio ${id?'editado':'creado'}: ${n}`);
   save(); closeSheet(); render();
@@ -8412,9 +8445,22 @@ function guardarRecargo(){
   DB.cfg.redondeo=+document.getElementById('rr').value||500;
   save(); closeSheet(); render(); toast('Guardado');
 }
+function serviciosAumento(sel){
+  if(sel==='todo') return DB.servicios.filter(s=>s.activo);
+  const a = byId(DB.areas, sel); if(!a) return [];
+  const ids = DB.areas.filter(x=>x.nombre.toLowerCase()===a.nombre.toLowerCase()).map(x=>x.id);
+  return DB.servicios.filter(s=>s.activo && ids.includes(s.areaId));
+}
 function aumentoMasivo(){
-  const areas = DB.areas.filter(a=>a.sucursalId===ST.sucursalId);
+  if(!puedeConfig()){ toast('No tenés acceso a la configuración'); return; }
+  const vistas=[];
+  const areas = DB.areas.filter(a=>{
+    const k=a.nombre.toLowerCase();
+    if(a.activa===false || vistas.includes(k)) return false;
+    vistas.push(k); return true; });
   sheet('Aumento de precios', `
+    <div class="infobox">El precio es el mismo en los cuatro locales, así que el aumento entra
+      en todos a la vez.</div>
     <div class="f"><label>¿A qué le subimos?</label>
       <select id="am"><option value="todo">Todo el negocio</option>
         ${areas.map(a=>`<option value="${a.id}">${a.icono} ${esc(a.nombre)}</option>`).join('')}
@@ -8425,8 +8471,7 @@ function aumentoMasivo(){
 }
 function verAumento(){
   const sel=document.getElementById('am').value, p=+document.getElementById('ap').value||0;
-  const todos = DB.servicios.filter(s=> s.activo && (sel==='todo'
-    ? byId(DB.areas,s.areaId).sucursalId===ST.sucursalId : s.areaId===sel));
+  const todos = serviciosAumento(sel);
   const svs = todos.filter(s=>!s.precioManual);
   const fijos = todos.filter(s=>s.precioManual);
   const m=DB.cfg.redondeo;
@@ -8437,7 +8482,7 @@ function verAumento(){
       a mano no se toca${fijos.length>1?'n':''}: ${fijos.map(s=>esc(s.nombre)).join(', ')}</div>`:''}
     <div class="listcard" style="max-height:320px;overflow-y:auto">
       ${nuevos.map(x=>`<div class="lr"><div class="g"><b>${esc(x.s.nombre)}</b>
-        <span>${esc(byId(DB.areas,x.s.areaId).nombre)}</span></div>
+        <span>${esc((byId(DB.areas,x.s.areaId)||{}).nombre||'')} · ${esc((byId(DB.sucursales,(byId(DB.areas,x.s.areaId)||{}).sucursalId)||{}).nombre||'')}</span></div>
         <div class="r"><span style="text-decoration:line-through;color:var(--faint)">${money(x.s.contado)}</span><br>
         <b style="color:var(--acc)">${money(x.nuevo)}</b></div></div>`).join('')}
     </div>
@@ -8449,8 +8494,7 @@ function verAumento(){
 function aplicarAumento(sel,p){
   if(!puedeConfig()){ toast('No tenés acceso a la configuración'); return; }
   const m=DB.cfg.redondeo;
-  DB.servicios.filter(s=> s.activo && !s.precioManual && (sel==='todo'
-    ? byId(DB.areas,s.areaId).sucursalId===ST.sucursalId : s.areaId===sel))
+  serviciosAumento(sel).filter(s=>!s.precioManual)
     .forEach(s=>{ s.contado = Math.ceil(s.contado*(1+p/100)/m)*m; });
   logAcc(`Aumento del ${p}% aplicado`);
   save(); closeSheet(); render(); toast('Precios actualizados');
@@ -8534,6 +8578,137 @@ function dejarSinUsoSucursal(id){
   save(); closeSheet(); render(); toast(s.activa?'Sucursal activada':'Sucursal fuera de uso');
   setTimeout(editarSucursales,150);
 }
+/* ---------- el paso a paso de la primera carga ---------- */
+function pasosConfig(){
+  const suc = ST.sucursalId;
+  const areasDe = DB.areas.filter(a=>a.sucursalId===suc && a.activa!==false);
+  const svsDe = DB.servicios.filter(x=>areasDe.some(a=>a.id===x.areaId));
+  const asgDe = DB.asign.filter(x=>areasDe.some(a=>a.id===x.areaId));
+  const pasos = [
+    {ok: DB.sucursales.length>0, t:'Cargá el local', d:'Nombre, dirección y teléfono', ir:"editarSucursales()"},
+    {ok: areasDe.length>0, t:'Cargá las áreas', d:'Cejas, depilación, manicuría…', ir:"go('areas')"},
+    {ok: svsDe.some(x=>x.contado>0), t:'Cargá los servicios con su precio', d:'Cuánto dura y cuánto sale cada uno', ir:"go('servicios')"},
+    {ok: DB.profesionales.filter(p=>p.activa).length>0, t:'Cargá las profesionales', d:'Quiénes trabajan', ir:"go('equipo')"},
+    {ok: asgDe.length>0 && DB.horarios.some(h=>asgDe.some(a=>a.id===h.asignId)), t:'Ponele el horario a cada una', d:'Qué días y en qué área trabaja', ir:"go('equipo')"}
+  ];
+  const falta = pasos.findIndex(p=>!p.ok);
+  if(falta===-1) return `<div class="infobox">Todo lo que hay acá lo cambia la dueña o administración
+    sin tocar nada más. Los cambios salen andando en la agenda al instante.</div>`;
+  return `<div class="card cardp" style="margin-bottom:13px">
+    <div class="h3" style="margin:0 0 9px">Para dejar el local listo</div>
+    ${pasos.map((p,i)=>`<div class="lr" style="padding:9px 0;border-bottom:${i===pasos.length-1?'0':'1px solid var(--line)'}">
+      <div class="av" style="background:${p.ok?'var(--ok)':(i===falta?'var(--acc)':'#ECECF1')};color:${p.ok||i===falta?'#fff':'#9A9AA5'};font-size:13px">${p.ok?'✓':(i+1)}</div>
+      <div class="g"><b style="${p.ok?'color:var(--muted);font-weight:600':''}">${p.t}</b>
+        <span class="small muted">${p.d}</span></div>
+      ${i===falta?`<button class="btn xs" onclick="${p.ir}">Ir</button>`:''}
+    </div>`).join('')}
+  </div>`;
+}
+
+/* ---------- copiar las áreas y los servicios de otro local ---------- */
+function hayOtroLocalCargado(){
+  return DB.sucursales.some(x=>x.id!==ST.sucursalId && x.activa!==false
+    && DB.areas.some(a=>a.sucursalId===x.id));
+}
+function copiarLocal(){
+  if(!puedeConfig()){ toast('No tenés acceso a la configuración'); return; }
+  const dest = byId(DB.sucursales, ST.sucursalId);
+  if(!dest){ toast('Elegí primero en qué local estás'); return; }
+  const otras = DB.sucursales.filter(x=>x.id!==dest.id && DB.areas.some(a=>a.sucursalId===x.id));
+  if(!otras.length){ toast('Todavía no hay otro local con áreas cargadas'); return; }
+  sheet('Copiar de otro local', `
+    <div class="infobox">Se copian las <b>áreas</b> y los <b>servicios con su precio</b> a
+      <b>${esc(dest.nombre)}</b>. Las áreas que ${esc(dest.nombre)} ya tenga con el mismo nombre
+      no se tocan. Las profesionales y los horarios no se copian: cada una tiene los suyos.</div>
+    <div class="f"><label>Copiar de</label>
+      <select id="cpo">${otras.map(x=>`<option value="${x.id}">${esc(x.nombre)}</option>`).join('')}</select></div>
+    <button class="btn" onclick="verCopia()">Ver qué se copia</button>`);
+}
+function verCopia(){
+  const o = document.getElementById('cpo').value;
+  const org = byId(DB.sucursales, o), dest = byId(DB.sucursales, ST.sucursalId);
+  const yaHay = DB.areas.filter(a=>a.sucursalId===dest.id).map(a=>a.nombre.toLowerCase());
+  const nuevas = DB.areas.filter(a=>a.sucursalId===o && !yaHay.includes(a.nombre.toLowerCase()));
+  const repes = DB.areas.filter(a=>a.sucursalId===o && yaHay.includes(a.nombre.toLowerCase()));
+  const cuantos = a => DB.servicios.filter(x=>x.areaId===a.id).length;
+  const total = nuevas.reduce((t,a)=>t+cuantos(a),0);
+  sheet('Revisá antes de copiar', `
+    ${nuevas.length?`<div class="warnbox">Se van a crear <b>${nuevas.length} área${nuevas.length===1?'':'s'}</b>
+      con <b>${total} servicio${total===1?'':'s'}</b> en ${esc(dest.nombre)}.</div>
+    <div class="listcard" style="max-height:300px;overflow-y:auto">
+      ${nuevas.map(a=>`<div class="lr"><div class="av" style="font-size:18px">${a.icono}</div>
+        <div class="g"><b>${esc(a.nombre)}</b><span>${cuantos(a)} servicio${cuantos(a)===1?'':'s'}${a.porTurno===false?' · por orden de llegada':' · con turno'}</span></div></div>`).join('')}
+    </div>`:`<div class="warnbox">${ic('alert','sm')} ${esc(dest.nombre)} ya tiene todas las áreas
+      de ${esc(org.nombre)}. No hay nada para copiar.</div>`}
+    ${repes.length?`<div class="infobox">No se tocan, porque ya existen acá:
+      ${repes.map(a=>esc(a.nombre)).join(', ')}</div>`:''}
+    ${nuevas.length?`<button class="btn" onclick="hacerCopia('${o}')">Copiar a ${esc(dest.nombre)}</button>`:''}
+    <button class="btn sec" style="margin-top:8px" onclick="closeSheet()">Cancelar</button>`);
+}
+function hacerCopia(origenId){
+  if(!puedeConfig()){ toast('No tenés acceso a la configuración'); return; }
+  const dest = ST.sucursalId;
+  const yaHay = DB.areas.filter(a=>a.sucursalId===dest).map(a=>a.nombre.toLowerCase());
+  let na=0, ns=0;
+  DB.areas.filter(a=>a.sucursalId===origenId).sort((x,y)=>(x.orden||0)-(y.orden||0)).forEach(a=>{
+    if(yaHay.includes(a.nombre.toLowerCase())) return;
+    const nid = uid('ar');
+    DB.areas.push({id:nid, sucursalId:dest, nombre:a.nombre, icono:a.icono,
+      supervisoraId:null, orden:a.orden||0, activa:a.activa!==false, porTurno:a.porTurno!==false});
+    na++;
+    DB.servicios.filter(x=>x.areaId===a.id).forEach(x=>{
+      DB.servicios.push(Object.assign({}, x, {id:uid('sv'), areaId:nid})); ns++;
+    });
+  });
+  logAcc(`Se copiaron ${na} áreas y ${ns} servicios de otro local`);
+  save(); closeSheet(); render();
+  toast(`Copiado: ${na} área${na===1?'':'s'} y ${ns} servicio${ns===1?'':'s'}`);
+}
+
+/* ---------- cambiar el precio sin entrar al servicio ---------- */
+function precioRapido(id){
+  if(!puedeConfig()){ toast('No tenés acceso a la configuración'); return; }
+  const s = byId(DB.servicios, id);
+  sheet('Precio de '+s.nombre, `
+    <div class="f"><label>Precio de contado</label>
+      <input type="number" id="pr1" value="${s.contado}" inputmode="numeric" oninput="prevPrecioRapido()"></div>
+    <div id="pr2" class="okbox"></div>
+    <button class="btn" onclick="guardarPrecioRapido('${id}')">Guardar</button>
+    <button class="btn sec" style="margin-top:8px" onclick="closeSheet();editarServicio('${id}')">
+      Cambiar todo lo demás</button>`, {focus:'pr1'});
+  setTimeout(prevPrecioRapido, 50);
+}
+function prevPrecioRapido(){
+  const c = +((document.getElementById('pr1')||{}).value||0);
+  const p = document.getElementById('pr2'); if(!p) return;
+  p.innerHTML = c>0
+    ? `Contado <b>${money(c)}</b> · con recargo del ${DB.cfg.recargo}%: <b>${money(precioLista(c))}</b>`
+    : 'Poné el precio de contado.';
+}
+function guardarPrecioRapido(id){
+  if(!puedeConfig()){ toast('No tenés acceso a la configuración'); return; }
+  const s = byId(DB.servicios, id);
+  const c = +document.getElementById('pr1').value||0;
+  if(c<=0){ toast('Poné un precio'); return; }
+  const antes = s.contado; s.contado = c;
+  logAcc(`Precio de ${s.nombre}: ${money(antes)} → ${money(c)}`);
+  save(); closeSheet(); render(); toast('Precio actualizado');
+}
+
+/* ---------- duplicar un servicio ---------- */
+function duplicarServicio(id){
+  if(!puedeConfig()){ toast('No tenés acceso a la configuración'); return; }
+  const s = byId(DB.servicios, id);
+  const n = {}; Object.assign(n, s);
+  n.id = uid('sv'); n.nombre = s.nombre+' (copia)'; n.activo = true;
+  DB.servicios.push(n);
+  DB.asign.filter(a=>a.areaId===n.areaId).forEach(a=>a.servicios.push(n.id));
+  logAcc(`Servicio duplicado: ${s.nombre}`);
+  save(); closeSheet(); render();
+  toast('Copiado: cambiale el nombre y el precio');
+  setTimeout(()=>editarServicio(n.id), 150);
+}
+
 function verPermisos(){
   const P = DB.cfg.permisos;
   sheet('Permisos por rol', `
@@ -8846,7 +9021,7 @@ render();
    Julián actualizaba y no veía los cambios. Cada vez que se abre,
    la app se fija sola si hay una más nueva y se recarga.
    ============================================================ */
-const VERSION_ISIS = 9;
+const VERSION_ISIS = 12;
 async function mirarSiHayNueva(){
   if(location.protocol === 'file:') return;
   try{
