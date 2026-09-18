@@ -5578,7 +5578,6 @@ function guardarComisionProfesional(pid){
   }));
   logAcc(`Comisión habitual de ${p.nombre}: ${anterior==null?'sin definir':anterior+'%'} → ${pct}%`);
   save(); closeSheet(); render(); toast('Comisión guardada');
-  setTimeout(()=>verProfesional(pid),200);
 }
 function borrarProfesional(pid){
   if(!puedeEditarEquipo()){ toast('Dar de baja a alguien lo hace administración'); return; }
@@ -9073,7 +9072,7 @@ render();
    Julián actualizaba y no veía los cambios. Cada vez que se abre,
    la app se fija sola si hay una más nueva y se recarga.
    ============================================================ */
-const VERSION_ISIS = 13;
+const VERSION_ISIS = 14;
 async function mirarSiHayNueva(){
   if(location.protocol === 'file:') return;
   try{
