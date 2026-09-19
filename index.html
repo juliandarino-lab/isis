@@ -1894,7 +1894,10 @@ function avisosDeTurno(profId, areaId, fecha, desdeMin, dur, exceptoLineaId){
 }
 /* ¿hace falta forzarlo? Si el horario está entre los libres de verdad, no. */
 function hayQueForzar(profId, areaId, fecha, hora, servicioId){
-  return !huecos(profId, areaId, fecha, servicioId).includes(hora);
+  /* Un hueco puede empezar a las 10:40 si el turno anterior terminó ahí.
+     La lista general se arma cada 15 minutos, pero al tocar ese hueco hay
+     que validar la hora real, no exigir que coincida con esa grilla. */
+  return forzarPara(profId, areaId, fecha, hora, servicioId);
 }
 /* lo mismo para un turno que YA existe y se está moviendo o reasignando
    (no se cuenta a sí mismo como ocupación) */
@@ -9095,7 +9098,7 @@ render();
    Julián actualizaba y no veía los cambios. Cada vez que se abre,
    la app se fija sola si hay una más nueva y se recarga.
    ============================================================ */
-const VERSION_ISIS = 15;
+const VERSION_ISIS = 16;
 async function mirarSiHayNueva(){
   if(location.protocol === 'file:') return;
   try{
