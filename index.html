@@ -647,14 +647,16 @@ function precioSegunMedio(contado, medio){
    ============================================================ */
 const AREAS_CON_TURNO = ['Cejas y pestañas','Ojos','Depilación definitiva',
   'Masajes y tratamientos','Masajes','Tratamientos'];
+const RECORDATORIO_DEF = 'Hola {nombre}! Te recordamos que {dia} a las {hora} hs tenés turno para {servicios} en el local de {local}. Te esperamos 💛 Si no podés venir, avisanos lo antes posible por favor.';
 
 function seed(){
   const D = { cfg:{negocio:'ISIS', recargo:15, redondeo:500, diasSinVenir:60,
-        permisos: JSON.parse(JSON.stringify(PERM_DEF))},
+        permisos: JSON.parse(JSON.stringify(PERM_DEF)),
+        recordatorioVispera:RECORDATORIO_DEF, recordatorioMismoDia:RECORDATORIO_DEF},
     sucursales:[], areas:[], servicios:[], profesionales:[], asign:[], horarios:[],
     bloqueos:[], clientas:[], visitas:[], espera:[], caja:[], gastos:[],
     vouchers:[], paquetes:[], liquidaciones:[], usuarios:[], fichadas:[], log:[], mov:[],
-    fila:[] };
+    fila:[], recordatorios:[] };
 
   /* sucursales */
   const S = [
@@ -1174,7 +1176,7 @@ function seed(){
   /* el libro de caja de los datos de ejemplo */
   const _db = DB; DB = D; D.mov = armarLibroDesdeLoViejo(); DB = _db;
   D.cfg.fondoCaja = 20000;
-  D.cfg.v = 4;
+  D.cfg.v = 8;
   return D;
 }
 
@@ -1240,6 +1242,9 @@ function migrar(){
   if(DB.cfg.linkApp===undefined) DB.cfg.linkApp = LINK_POR_DEFECTO;
   if(DB.cfg.presentado===undefined) DB.cfg.presentado = false;
   DB.fila = DB.fila || [];
+  DB.recordatorios = DB.recordatorios || [];
+  if(!DB.cfg.recordatorioVispera) DB.cfg.recordatorioVispera = RECORDATORIO_DEF;
+  if(!DB.cfg.recordatorioMismoDia) DB.cfg.recordatorioMismoDia = RECORDATORIO_DEF;
   /* la agenda va de media hora, de 9 a 19:30, igual en los cuatro locales */
   if(!DB.cfg.paso)   DB.cfg.paso = 30;
   if(!DB.cfg.abre)   DB.cfg.abre = '09:00';
@@ -1275,6 +1280,7 @@ function migrar(){
     delete DB.cfg.pedirClave;
     DB.cfg.v = 7;
   }
+  if(DB.cfg.v < 8) DB.cfg.v = 8;
   if(DB.cfg.pedirPin===undefined) DB.cfg.pedirPin = false;
   /* volver a entrar como la última vez que se usó este aparato */
   if(DB.cfg.ultimoUsuario && byId(DB.usuarios, DB.cfg.ultimoUsuario)){
@@ -1376,7 +1382,7 @@ const ST = {
   usuarioId:'us2', view:'home', sucursalId:'su1', areaId:null,
   fecha:hoy(), profTab:null, q:'', clientaId:null, visitaId:null,
   eqTab:'hoy', semana:null, fichaFrom:'clientas', qp:'', diaTodo:false, ultimoTocado:null,
-  cajaFecha:null
+  cajaFecha:null, recTab:null, recSucursalId:null
 };
 const CAJA_FECHA = () => ST.cajaFecha || hoy();
 
@@ -1436,6 +1442,8 @@ const puedeDescuentos  = () => puedeVerPrecios();
 const puedeVerNotasInternas = () => ['todo','suc','area'].includes(perm('agenda'));
 /* el teléfono de la clienta tampoco: la profesional no la contacta, eso lo hace recepción */
 const puedeVerTelefono = () => ['todo','suc','area'].includes(perm('agenda'));
+/* recordatorios muestra teléfonos y anota quién abrió cada WhatsApp: solo estos roles */
+const puedeRecordatorios = () => ['duena','admin','supervisora','recepcion'].includes(usuario().rol);
 /* pero SÍ ve la comisión de los turnos que hace ella */
 const suComision = l => puedeVerComisiones() ||
   (perm('agenda')==='prop' && usuario().profId && l.profId===usuario().profId);
@@ -1477,6 +1485,7 @@ const VISTA_OK = {
   equipo:puedeVerEquipo, caja:puedeCobrar, vouchers:puedeCobrar,
   espera:puedeEditarAgenda, fila:puedeVerAgenda, horarios:puedeVerEquipo,
   comisiones:puedeVerComisiones,
+  recordatorios:puedeRecordatorios,
   reportes:puedeVerReportes,
   config:puedeConfig, servicios:puedeConfig, areas:puedeConfig, usuarios:puedeConfig,
   precios:()=>true
@@ -2076,9 +2085,22 @@ function logAcc(txt){
   DB.log.unshift({ts:new Date().toISOString(), usuario:usuario().nombre, texto:txt});
   DB.log = DB.log.slice(0,300);
 }
+function numeroWhatsApp(tel){
+  let n=String(tel||'').replace(/\D/g,'');
+  if(n.startsWith('0054')) n=n.slice(4);
+  else if(n.startsWith('54')) n=n.slice(2);
+  if(n.length===11 && n.startsWith('9')) n=n.slice(1);
+  if(n.startsWith('0')) n=n.slice(1);
+  /* En Argentina el 15 se usa al marcar dentro del país, pero no en WhatsApp. */
+  if(n.length===12){
+    for(let p=2;p<=4;p++) if(n.slice(p,p+2)==='15'){
+      n=n.slice(0,p)+n.slice(p+2); break;
+    }
+  }
+  return n?'549'+n:'';
+}
 function waLink(tel, msg){
-  const n = String(tel).replace(/\D/g,'');
-  return 'https://wa.me/54'+n+'?text='+encodeURIComponent(msg);
+  return 'https://wa.me/'+numeroWhatsApp(tel)+'?text='+encodeURIComponent(msg);
 }
 
 /* ============================================================
@@ -2125,13 +2147,13 @@ function render(){
   const views = {home:vHome, agenda:vAgenda, clientas:vClientas, ficha:vFicha,
     equipo:vEquipo, caja:vCaja, config:vConfig, servicios:vServicios, areas:vAreas,
     comisiones:vComisiones, reportes:vReportes, espera:vEspera, vouchers:vVouchers, fila:vFila,
-    horarios:vHorarios,
+    horarios:vHorarios, recordatorios:vRecordatorios,
     usuarios:vUsuarios, precios:vPrecios};
   const titulos = {home:DB.cfg.negocio, agenda:'Agenda', clientas:'Clientas', ficha:'Clienta',
     equipo:'Equipo', caja:'Caja', config:'Configuración', servicios:'Servicios', areas:'Áreas',
     comisiones:'Comisiones', reportes:'Reportes', espera:'Avisar cuando haya lugar',
     vouchers:'Vouchers', fila:'La fila', horarios:'Horarios de la semana',
-    usuarios:'Usuarios', precios:'Precios'};
+    recordatorios:'Recordatorios', usuarios:'Usuarios', precios:'Precios'};
   const back = !['home','agenda','clientas','equipo','caja'].includes(ST.view);
 
   const html = `
@@ -2988,6 +3010,165 @@ function vFila(){
 /* ============================================================
    INICIO
    ============================================================ */
+function recordatorioTipoSugerido(){ return ahoraMin()<12*60 ? 'mismodia' : 'vispera'; }
+function fechaRecordatorio(tipo){ return tipo==='mismodia' ? hoy() : addDays(hoy(),1); }
+function sucursalesRecordatorios(){
+  const u=usuario(), activas=DB.sucursales.filter(s=>s.activa);
+  if(['duena','admin','supervisora'].includes(u.rol)) return activas;
+  const sid=u.sucursalId||ST.sucursalId;
+  return activas.filter(s=>s.id===sid);
+}
+function sucursalDeRecordatorio(r){
+  if(r.sucursalId) return r.sucursalId;
+  const v=byId(DB.visitas,r.visitaId);
+  return v?v.sucursalId:null;
+}
+function recordatorioActivo(g,tipo){
+  const rs=(DB.recordatorios||[]).filter(r=>r.tipo===tipo && r.fecha===g.fecha &&
+    r.clientaId===g.clientaId && sucursalDeRecordatorio(r)===g.sucursalId);
+  const anulados=new Set(rs.filter(r=>r.accion==='anula' && r.anulaId).map(r=>r.anulaId));
+  const enviados=rs.filter(r=>r.accion!=='anula' && !anulados.has(r.id));
+  return enviados.length?enviados[enviados.length-1]:null;
+}
+function gruposRecordatorios(tipo,sucursalId,fechaForzada){
+  const fecha=fechaForzada||fechaRecordatorio(tipo), grupos={};
+  DB.visitas.filter(v=>v.fecha===fecha && v.sucursalId===sucursalId && !v.sinTurno).forEach(v=>{
+    const lineas=(v.lineas||[]).filter(l=>l.estado==='res'||l.estado==='conf');
+    if(!lineas.length) return;
+    const key=v.clientaId+'|'+v.sucursalId+'|'+v.fecha;
+    if(!grupos[key]) grupos[key]={clientaId:v.clientaId,sucursalId:v.sucursalId,fecha:v.fecha,
+      visitas:[],lineas:[]};
+    grupos[key].visitas.push(v);
+    lineas.forEach(l=>grupos[key].lineas.push({...l,visitaId:v.id}));
+  });
+  return Object.values(grupos).map(g=>{
+    g.clienta=byId(DB.clientas,g.clientaId)||{nombre:'Clienta eliminada',tel:''};
+    g.sucursal=byId(DB.sucursales,g.sucursalId)||{nombre:'Local'};
+    g.lineas.sort((a,b)=>mh(a.hora)-mh(b.hora));
+    g.visitaIds=[...new Set(g.visitas.map(v=>v.id))];
+    g.horas=[...new Set(g.lineas.map(l=>l.hora))].sort((a,b)=>mh(a)-mh(b));
+    g.servicios=[...new Set(g.lineas.map(l=>(byId(DB.servicios,l.servicioId)||{}).nombre).filter(Boolean))];
+    g.profesionales=[...new Set(g.lineas.map(l=>(byId(DB.profesionales,l.profId)||{}).nombre).filter(Boolean))];
+    g.tieneTelefono=String(g.clienta.tel||'').replace(/\D/g,'').length>=6;
+    g.enviado=recordatorioActivo(g,tipo);
+    return g;
+  }).sort((a,b)=>mh(a.horas[0])-mh(b.horas[0]) || a.clienta.nombre.localeCompare(b.clienta.nombre));
+}
+function unirNatural(xs){
+  if(xs.length<2) return xs[0]||'';
+  return xs.slice(0,-1).join(', ')+' y '+xs[xs.length-1];
+}
+function horaParaMensaje(h){
+  const x=String(h||'').replace(/^0/,'');
+  return x.endsWith(':00')?x.slice(0,-3):x;
+}
+function mensajeRecordatorio(g,tipo){
+  let txt=tipo==='mismodia' ? DB.cfg.recordatorioMismoDia : DB.cfg.recordatorioVispera;
+  txt=txt||RECORDATORIO_DEF;
+  const datos={
+    '{nombre}':String(g.clienta.nombre||'').trim().split(/\s+/)[0]||'Hola',
+    '{dia}':tipo==='mismodia'?'hoy':'mañana',
+    '{hora}':unirNatural(g.horas.map(horaParaMensaje)),
+    '{servicios}':unirNatural(g.servicios),
+    '{local}':g.sucursal.nombre
+  };
+  Object.entries(datos).forEach(([k,v])=>{ txt=txt.split(k).join(v); });
+  return txt;
+}
+function horaDeEnvio(r){
+  try{return new Date(r.cuando).toLocaleTimeString('es-AR',{timeZone:TZ,hour:'2-digit',minute:'2-digit'});}
+  catch(e){return String(r.cuando||'').slice(11,16);}
+}
+function resumenRecordatoriosInicio(){
+  if(!puedeRecordatorios()) return '';
+  const tipo=recordatorioTipoSugerido();
+  const gs=gruposRecordatorios(tipo,ST.sucursalId);
+  const mandar=gs.filter(g=>g.tieneTelefono&&!g.enviado).length;
+  const llamar=gs.filter(g=>!g.tieneTelefono).length;
+  if(!mandar&&!llamar) return 'al día';
+  return (mandar?mandar+' para mandar':'')+(mandar&&llamar?' · ':'')+(llamar?llamar+' para llamar':'');
+}
+function abrirRecordatorios(){
+  if(!puedeRecordatorios()){ toast('No tenés acceso a Recordatorios'); return; }
+  ST.recTab=recordatorioTipoSugerido();
+  const sucs=sucursalesRecordatorios();
+  ST.recSucursalId=sucs.some(s=>s.id===ST.sucursalId)?ST.sucursalId:(sucs[0]||{}).id||null;
+  go('recordatorios');
+}
+function marcarRecordatorio(clientaId,tipo,fecha,sucursalId){
+  if(!puedeRecordatorios()) return false;
+  const g=gruposRecordatorios(tipo,sucursalId,fecha).find(x=>x.clientaId===clientaId);
+  if(!g || !g.tieneTelefono || recordatorioActivo(g,tipo)) return true;
+  const r={id:uid('re'),visitaId:g.visitaIds[0],visitaIds:g.visitaIds,tipo,fecha,
+    clientaId,sucursalId,cuando:new Date().toISOString(),usuario:usuario().nombre,
+    usuarioId:usuario().id,accion:'envio'};
+  DB.recordatorios.push(r);
+  logAcc(`Recordatorio ${tipo==='mismodia'?'del día':'de víspera'} abierto: ${g.clienta.nombre}`);
+  save();
+  setTimeout(()=>{ if(ST.view==='recordatorios') render(); },0);
+  return true;
+}
+function desmarcarRecordatorio(id){
+  if(!puedeRecordatorios()){ toast('No tenés acceso a Recordatorios'); return; }
+  const r=byId(DB.recordatorios,id);
+  if(!r || r.accion==='anula' || DB.recordatorios.some(x=>x.accion==='anula'&&x.anulaId===id)) return;
+  DB.recordatorios.push({id:uid('re'),visitaId:r.visitaId,visitaIds:r.visitaIds||[r.visitaId],
+    tipo:r.tipo,fecha:r.fecha,clientaId:r.clientaId,sucursalId:sucursalDeRecordatorio(r),
+    cuando:new Date().toISOString(),usuario:usuario().nombre,usuarioId:usuario().id,
+    accion:'anula',anulaId:r.id});
+  logAcc('Recordatorio desmarcado');
+  save(); render(); toast('Quedó pendiente otra vez');
+}
+function filaRecordatorio(g,tipo){
+  const servicios=g.servicios.join(' · '), profes=g.profesionales.join(' · ');
+  const horas=g.horas.join(' · ');
+  return `<div class="lr" style="align-items:flex-start;flex-wrap:wrap">
+    <div class="av">${esc((g.horas[0]||'—').slice(0,2))}</div>
+    <div class="g"><b>${esc(g.clienta.nombre)}</b>
+      <span style="white-space:normal">${esc(horas)} · ${esc(servicios)}</span>
+      <span style="white-space:normal">${esc(profes)} · ${esc(g.sucursal.nombre)}</span></div>
+    <div class="btns" style="width:100%;margin-top:0">
+      ${g.enviado?`<span class="bd ok">✓ mandado ${horaDeEnvio(g.enviado)} · ${esc(g.enviado.usuario)}</span>
+        <button class="btn sm sec" onclick="desmarcarRecordatorio('${g.enviado.id}')">Desmarcar</button>`
+      :`<a class="btn sm wa" href="${esc(waLink(g.clienta.tel,mensajeRecordatorio(g,tipo)))}" target="_blank" rel="noopener"
+          onclick="return marcarRecordatorio('${g.clientaId}','${tipo}','${g.fecha}','${g.sucursalId}')">${ic('wa','sm')} Abrir WhatsApp</a>`}
+    </div></div>`;
+}
+function vRecordatorios(){
+  if(!ST.recTab) ST.recTab=recordatorioTipoSugerido();
+  const sucs=sucursalesRecordatorios();
+  if(!sucs.length) return '<div class="empty">No hay ningún local cargado.</div>';
+  if(!sucs.some(s=>s.id===ST.recSucursalId))
+    ST.recSucursalId=sucs.some(s=>s.id===ST.sucursalId)?ST.sucursalId:sucs[0].id;
+  const cuenta=tipo=>gruposRecordatorios(tipo,ST.recSucursalId).filter(g=>g.tieneTelefono&&!g.enviado).length;
+  const tabs=[['vispera','Para mañana'],['mismodia','Para hoy']];
+  const gs=gruposRecordatorios(ST.recTab,ST.recSucursalId);
+  const conTel=gs.filter(g=>g.tieneTelefono), sinTel=gs.filter(g=>!g.tieneTelefono);
+  const pendientes=conTel.filter(g=>!g.enviado), mandados=conTel.filter(g=>g.enviado);
+  return `<div class="tabs">
+      ${tabs.map(([k,n])=>`<button class="tab ${ST.recTab===k?'on':''}"
+        onclick="ST.recTab='${k}';render()">${n} · ${cuenta(k)} sin mandar</button>`).join('')}
+    </div>
+    ${sucs.length>1?`<div class="subtabs">
+      ${sucs.map(s=>`<button class="ptab ${ST.recSucursalId===s.id?'on':''}"
+        onclick="ST.recSucursalId='${s.id}';render()">${esc(s.nombre)}</button>`).join('')}
+    </div>`:''}
+    <div class="pad">
+      <div class="infobox">Tocá WhatsApp: se abre con el mensaje listo y ISIS lo marca como mandado.
+        Si al final no lo enviaste, volvé y tocá <b>Desmarcar</b>.</div>
+      ${gs.length?`<div class="h3">Para mandar · ${pendientes.length}</div>
+        ${pendientes.length?`<div class="listcard">${pendientes.map(g=>filaRecordatorio(g,ST.recTab)).join('')}</div>`
+          :`<div class="okbox">No queda ningún WhatsApp pendiente.</div>`}
+        ${mandados.length?`<div class="h3">Ya mandados · ${mandados.length}</div>
+          <div class="listcard">${mandados.map(g=>filaRecordatorio(g,ST.recTab)).join('')}</div>`:''}
+        ${sinTel.length?`<div class="h3">Estas hay que llamarlas · ${sinTel.length}</div>
+          <div class="listcard">${sinTel.map(g=>`<div class="lr"><div class="av">${esc((g.horas[0]||'—').slice(0,2))}</div>
+            <div class="g"><b>${esc(g.clienta.nombre)}</b><span>${esc(g.horas.join(' · '))} · ${esc(g.servicios.join(' · '))}</span>
+            <span>${esc(g.sucursal.nombre)} · sin teléfono cargado</span></div></div>`).join('')}</div>`:''}`
+        :`<div class="empty">No hay turnos reservados o confirmados para este día.</div>`}
+    </div>`;
+}
+
 function vHome(){
   const H = hoy();
   const suc = byId(DB.sucursales, ST.sucursalId);
@@ -3011,6 +3192,7 @@ function vHome(){
     ${puedeEditarAgenda()?`<button class="btn" style="margin-bottom:9px" onclick="nuevoTurno()">${ic('plus')} Nuevo turno</button>`:''}
     <div class="q2">
       ${puedeCobrar()?`<button class="qb" onclick="recepcionRapida()"><b>Recepción rápida</b><span>Buscar a una clienta y cobrarle</span></button>`:''}
+      ${puedeRecordatorios()?`<button class="qb" onclick="abrirRecordatorios()"><b>Recordatorios</b><span>${esc(resumenRecordatoriosInicio())}</span></button>`:''}
       ${puedeEditarAgenda()?`<button class="qb" onclick="llegoAlguien()"><b>Llegó alguien sin turno</b><span>Anotarla en la fila</span></button>`:''}
       ${puedeEditarAgenda()?`<button class="qb" onclick="quienEstaLibre()"><b>¿Quién está libre ahora?</b><span>Ver huecos al toque</span></button>`:''}
       ${puedeEditarAgenda()?`<button class="qb" onclick="cuandoHayLugar()"><b>¿Cuándo hay lugar?</b><span>El primer turno de cada servicio</span></button>`:''}
@@ -8103,6 +8285,8 @@ function vConfig(){
         <span>Qué puede hacer cada rol</span></div>${ic('chev','sm')}</button>
       <button class="lr" onclick="mandarLink()"><div class="g"><b>Mandar el link del sistema</b>
         <span>Para que entren desde su celular</span></div>${ic('chev','sm')}</button>
+      <button class="lr" onclick="editarMensajesRecordatorios()"><div class="g"><b>Mensajes de recordatorios</b>
+        <span>Texto para el día anterior y para el mismo día</span></div>${ic('chev','sm')}</button>
       <button class="lr" onclick="datosDelNegocio()"><div class="g"><b>Datos del negocio</b>
         <span>${esc(DB.cfg.negocio)} · avisa a los ${DB.cfg.diasSinVenir} días sin venir</span></div>${ic('chev','sm')}</button>
     </div>
@@ -8157,6 +8341,27 @@ function guardarDatosNegocio(){
   logAcc(`Datos del negocio actualizados: ${n}`);
   save(); closeSheet(); render(); toast('Guardado');
 }
+function editarMensajesRecordatorios(){
+  if(!puedeConfig()){ toast('No tenés acceso a la configuración'); return; }
+  sheet('Mensajes de recordatorios', `
+    <div class="infobox">Podés usar estos datos: <b>{nombre}</b>, <b>{dia}</b>, <b>{hora}</b>,
+      <b>{servicios}</b> y <b>{local}</b>.</div>
+    <div class="f"><label>Mensaje del día anterior</label>
+      <textarea id="rmv" rows="6">${esc(DB.cfg.recordatorioVispera||RECORDATORIO_DEF)}</textarea></div>
+    <div class="f"><label>Mensaje del mismo día</label>
+      <textarea id="rmd" rows="6">${esc(DB.cfg.recordatorioMismoDia||RECORDATORIO_DEF)}</textarea></div>
+    <button class="btn" onclick="guardarMensajesRecordatorios()">Guardar mensajes</button>`);
+}
+function guardarMensajesRecordatorios(){
+  if(!puedeConfig()){ toast('No tenés acceso a la configuración'); return; }
+  const vispera=document.getElementById('rmv').value.trim();
+  const mismo=document.getElementById('rmd').value.trim();
+  if(!vispera||!mismo){ toast('Los dos mensajes tienen que tener texto'); return; }
+  DB.cfg.recordatorioVispera=vispera;
+  DB.cfg.recordatorioMismoDia=mismo;
+  logAcc('Mensajes de recordatorios actualizados');
+  save(); closeSheet(); render(); toast('Mensajes guardados');
+}
 /* limpiar el movimiento de ejemplo dejando la estructura ya cargada */
 
 /* ============================================================
@@ -8206,12 +8411,14 @@ function hacerCero(){
   DB = {
     cfg: { negocio: DB.cfg.negocio, recargo: DB.cfg.recargo, redondeo: DB.cfg.redondeo,
       diasSinVenir: DB.cfg.diasSinVenir, permisos: JSON.parse(JSON.stringify(PERM_DEF)),
-      v: 4, fondoCaja: 0, pedirPin: !!DB.cfg.pedirPin, linkApp: DB.cfg.linkApp,
+      recordatorioVispera: DB.cfg.recordatorioVispera||RECORDATORIO_DEF,
+      recordatorioMismoDia: DB.cfg.recordatorioMismoDia||RECORDATORIO_DEF,
+      v: 8, fondoCaja: 0, pedirPin: !!DB.cfg.pedirPin, linkApp: DB.cfg.linkApp,
       presentado: true, ultimoUsuario: mio.id },
     sucursales:[], areas:[], servicios:[], profesionales:[], asign:[], horarios:[],
     bloqueos:[], clientas:[], visitas:[], espera:[], caja:[], gastos:[],
     vouchers:[], paquetes:[], liquidaciones:[], usuarios:[mio],
-    excepciones:[], fichadas:[], log:[], mov:[], fila:[]
+    excepciones:[], fichadas:[], log:[], mov:[], fila:[], recordatorios:[]
   };
   ST.usuarioId = mio.id; ST.sucursalId = null; ST.areaId = null;
   ST.clientaId = null; ST.visitaId = null; ST.cajaFecha = null; ST.view = 'config';
@@ -8251,7 +8458,7 @@ function hacerLimpieza(){
   if(!puedeConfig()){ toast('No tenés acceso a la configuración'); return; }
   const c=k=>(document.getElementById(k)||{}).checked;
   const hecho=[];
-  if(c('li_tur')){ DB.visitas=[]; hecho.push('turnos'); }
+  if(c('li_tur')){ DB.visitas=[]; DB.recordatorios=[]; hecho.push('turnos y recordatorios'); }
   if(c('li_caja')){ DB.caja=[]; DB.gastos=[]; DB.fichadas=[]; DB.mov=[]; DB.cfg.fondoCaja=0;
     hecho.push('caja y fichajes'); }
   if(c('li_tur')) DB.fila=[];
@@ -8261,7 +8468,7 @@ function hacerLimpieza(){
   if(c('li_blq')){ DB.bloqueos=[]; DB.excepciones=[]; hecho.push('bloqueos y ausencias'); }
   if(!hecho.length){ toast('No tildaste nada'); return; }
   /* si se borraron las clientas, no pueden quedar visitas colgadas */
-  if(c('li_cli')) DB.visitas=[];
+  if(c('li_cli')){ DB.visitas=[]; DB.recordatorios=[]; }
   /* el LIBRO DE CAJA se rehace con lo que quedó: si no, muestra plata que ya no existe */
   DB.mov = armarLibroDesdeLoViejo();
   logAcc('Datos de prueba borrados: '+hecho.join(', '));
@@ -9098,7 +9305,7 @@ render();
    Julián actualizaba y no veía los cambios. Cada vez que se abre,
    la app se fija sola si hay una más nueva y se recarga.
    ============================================================ */
-const VERSION_ISIS = 16;
+const VERSION_ISIS = 17;
 async function mirarSiHayNueva(){
   if(location.protocol === 'file:') return;
   try{
