@@ -1496,17 +1496,35 @@ const vistaPermitida = v => !VISTA_OK[v] || VISTA_OK[v]();
    MOTOR DE DISPONIBILIDAD
    ============================================================ */
 
-/* tramos en que la profesional está OCUPADA por una línea
-   (trabaja -> proceso libre -> vuelve a trabajar) */
-function tramosOcupados(linea){
+/* tramos en que la profesional trabaja de verdad. El proceso queda libre. */
+function tramosActivos(sv, ini, dur){
+  const fin = ini + Number(dur==null ? (sv?sv.dur:0) : dur);
+  if(!sv) return [[ini,fin]];
+  if(sv.proceso>0 && sv.trabajo2>0)
+    return [[ini,ini+sv.trabajo1],[ini+sv.trabajo1+sv.proceso,fin]];
+  if(sv.proceso>0) return [[ini,ini+sv.trabajo1]];
+  return [[ini,fin]];
+}
+/* Los turnos viejos usan hora y duración prevista. Los nuevos, cuando ya
+   empezaron, usan la hora real. Al terminar antes se libera el resto. */
+function tramosOcupados(linea, extender=true){
   const sv = byId(DB.servicios, linea.servicioId);
-  const ini = mh(linea.hora);
-  if(!sv) return [[ini, ini+linea.dur]];
-  if(sv.proceso>0 && sv.trabajo2>0){
-    return [[ini, ini+sv.trabajo1],[ini+sv.trabajo1+sv.proceso, ini+sv.dur]];
+  const usaReal = linea.inicioReal && (linea.estado==='serv' || linea.estado==='fin');
+  const ini = mh(usaReal ? linea.inicioReal : linea.hora);
+  let tramos = tramosActivos(sv, ini, linea.dur);
+  if(linea.estado==='fin' && linea.finReal){
+    const finReal=mh(linea.finReal);
+    tramos=tramos.map(([a,b])=>[a,Math.min(b,finReal)]).filter(([a,b])=>b>a);
   }
-  if(sv.proceso>0) return [[ini, ini+sv.trabajo1]];
-  return [[ini, ini+sv.dur]];
+  /* Si sigue En servicio después de lo previsto, no queda libre por reloj.
+     Un proceso sin segundo trabajo sí deja libre a la profesional. */
+  const sigueOcupando = !sv || sv.proceso<=0 || sv.trabajo2>0;
+  if(extender && linea.estado==='serv' && sigueOcupando &&
+     linea.visita && linea.visita.fecha===hoy() && tramos.length){
+    const ahora=ahoraMin(), ultimo=tramos[tramos.length-1];
+    if(ahora>=ultimo[1]) ultimo[1]=ahora+1;
+  }
+  return tramos;
 }
 function lineasDe(fecha, filtro){
   const out=[];
@@ -1554,37 +1572,100 @@ function horarioDe(profId, areaId, fecha){
 function bloqueosDe(profId, fecha){
   return DB.bloqueos.filter(b=>b.profId===profId && b.fecha===fecha);
 }
-/* cuántas atenciones activas tiene la profesional en [a,b) */
-function solapadas(profId, fecha, a, b, exceptoLineaId){
-  let n=0;
-  /* si la clienta no asistió, la profesional quedó libre: ese rato se puede volver a usar */
-  lineasDe(fecha, l=>l.profId===profId && l.id!==exceptoLineaId && l.estado!=='no').forEach(l=>{
-    tramosOcupados(l).forEach(([x,y])=>{ if(a < y && b > x) n++; });
+/* Una pasada de Fila puede tener varios renglones, pero sigue siendo una sola
+   clienta con una sola profesional. Se agrupa para no contarla dos veces. */
+function unirOcupaciones(xs){
+  const orden=[...xs].sort((a,b)=>a.desde-b.desde || a.hasta-b.hasta), out=[];
+  orden.forEach(x=>{
+    const u=out[out.length-1];
+    if(u && x.desde<=u.hasta){
+      u.hasta=Math.max(u.hasta,x.hasta);
+      u.limite=Math.min(u.limite,x.limite);
+    }else out.push({...x});
   });
-  return n;
+  return out;
+}
+function ocupacionesDe(profId, fecha, exceptoLineaId){
+  const out=[], filaPorVisita={};
+  lineasDe(fecha, l=>l.profId===profId && l.id!==exceptoLineaId && l.estado!=='no').forEach(l=>{
+    const sv=byId(DB.servicios,l.servicioId);
+    const items=tramosOcupados(l, !(l.visita&&l.visita.sinTurno)).map(([a,b])=>({
+      desde:a, hasta:b, limite:Math.max(1,Number((sv&&sv.simult)||1)), linea:l, visita:l.visita
+    }));
+    if(l.visita && l.visita.sinTurno){
+      (filaPorVisita[l.visita.id]=filaPorVisita[l.visita.id]||[]).push(...items);
+    }else out.push(...items);
+  });
+  Object.keys(filaPorVisita).forEach(vid=>{
+    const f=DB.fila.find(x=>x.visitaId===vid), items=filaPorVisita[vid];
+    const desde=f&&f.desde?mh(f.desde):-Infinity;
+    const hasta=f&&f.hasta?mh(f.hasta):Infinity;
+    let rec=items.map(x=>({...x,desde:Math.max(x.desde,desde),hasta:Math.min(x.hasta,hasta)}))
+      .filter(x=>x.hasta>x.desde);
+    rec=unirOcupaciones(rec);
+    /* Si la pasada sigue abierta después de la duración prevista, continúa
+       ocupada hasta que Recepción toque Terminar. */
+    if(f && f.estado==='at' && fecha===hoy() && rec.length){
+      const ahora=ahoraMin(), ultimo=rec[rec.length-1];
+      const linFinal=items.sort((a,b)=>a.hasta-b.hasta)[items.length-1];
+      const svFinal=linFinal&&linFinal.linea?byId(DB.servicios,linFinal.linea.servicioId):null;
+      if((!svFinal || svFinal.proceso<=0 || svFinal.trabajo2>0) && ahora>=ultimo.hasta)
+        ultimo.hasta=ahora+1;
+    }
+    out.push(...rec);
+  });
+  return out;
+}
+/* La capacidad válida es siempre la menor entre lo que entra y lo que ya
+   está ocurriendo. Así un servicio de capacidad 3 no pisa uno de capacidad 1. */
+function capacidadDisponible(profId, fecha, a, b, limiteNuevo, exceptoLineaId){
+  const os=ocupacionesDe(profId,fecha,exceptoLineaId).filter(x=>a<x.hasta && b>x.desde);
+  const cortes=[a,b];
+  os.forEach(x=>{ cortes.push(Math.max(a,x.desde),Math.min(b,x.hasta)); });
+  const puntos=[...new Set(cortes)].sort((x,y)=>x-y);
+  for(let i=0;i<puntos.length-1;i++){
+    const x=puntos[i], y=puntos[i+1]; if(y<=x) continue;
+    const activas=os.filter(o=>x<o.hasta && y>o.desde);
+    if(!activas.length) continue;
+    const limite=Math.min(Math.max(1,Number(limiteNuevo||1)),...activas.map(o=>o.limite));
+    if(activas.length+1>limite) return false;
+  }
+  return true;
+}
+/* Respuesta única para Agenda, Fila y consultas rápidas. */
+function evaluarDisponibilidad({profId,areaId,fecha,desde,servicioId,dur,exceptoLineaId}){
+  const sv=byId(DB.servicios,servicioId), motivos=[];
+  const t=typeof desde==='number'?desde:mh(desde), d=Number(dur==null?(sv&&sv.dur):dur);
+  const h=horarioDe(profId,areaId,fecha), fin=t+d;
+  if(!sv || !Number.isFinite(t) || !Number.isFinite(d))
+    return {ok:false,motivos:['Falta definir el servicio o la hora.'],desde:t,hasta:fin,tramos:[]};
+  if(!h) motivos.push('No trabaja en esa área ese día.');
+  else{
+    if(t<mh(h.desde) || fin>mh(h.hasta)) motivos.push(`Queda fuera de su horario (${h.desde} a ${h.hasta}).`);
+    if(h.pausaD && t<mh(h.pausaH) && fin>mh(h.pausaD)) motivos.push(`Cae en su pausa (${h.pausaD} a ${h.pausaH}).`);
+  }
+  if(bloqueosDe(profId,fecha).some(b=>t<mh(b.hasta) && fin>mh(b.desde)))
+    motivos.push('Tiene ese horario bloqueado.');
+  const tramos=tramosActivos(sv,t,d);
+  if(tramos.some(([a,b])=>!capacidadDisponible(profId,fecha,a,b,sv.simult,exceptoLineaId)))
+    motivos.push('Se superpone con otra atención.');
+  return {ok:motivos.length===0,motivos:[...new Set(motivos)],desde:t,hasta:fin,tramos};
+}
+/* Se conserva para datos y pruebas anteriores; devuelve cuántos tramos tocan
+   el intervalo, ya usando la fuente única. */
+function solapadas(profId, fecha, a, b, exceptoLineaId){
+  return ocupacionesDe(profId,fecha,exceptoLineaId).filter(x=>a<x.hasta && b>x.desde).length;
 }
 /* huecos donde entra un servicio */
 function huecos(profId, areaId, fecha, servicioId){
   const h = horarioDe(profId, areaId, fecha);
   if(!h) return [];
   const sv = byId(DB.servicios, servicioId);
+  if(!sv) return [];
   const desde = mh(h.desde), hasta = mh(h.hasta);
-  const pausa = h.pausaD ? [mh(h.pausaD), mh(h.pausaH)] : null;
-  const blqs = bloqueosDe(profId, fecha).map(b=>[mh(b.desde), mh(b.hasta)]);
   const out=[];
   for(let t=desde; t+sv.dur<=hasta; t+=15){
-    const fin = t+sv.dur;
-    if(pausa && t < pausa[1] && fin > pausa[0]) continue;
-    if(blqs.some(([x,y])=> t<y && fin>x)) continue;
-    /* tramos activos del nuevo servicio */
-    const nuevos = sv.proceso>0 && sv.trabajo2>0
-      ? [[t,t+sv.trabajo1],[t+sv.trabajo1+sv.proceso, fin]]
-      : sv.proceso>0 ? [[t,t+sv.trabajo1]] : [[t,fin]];
-    let libre = true;
-    for(const [a,b] of nuevos){
-      if(solapadas(profId, fecha, a, b) >= sv.simult){ libre=false; break; }
-    }
-    if(libre) out.push(hm(t));
+    if(evaluarDisponibilidad({profId,areaId,fecha,desde:t,servicioId}).ok) out.push(hm(t));
   }
   return out;
 }
@@ -1596,14 +1677,19 @@ function huecosLibres(profId, areaId, fecha){
   if(!h) return [];
   const desde = mh(h.desde), hasta = mh(h.hasta);
   const ocup = [];
-  /* todos sus turnos del día, de cualquier área: si está ocupada en otra, no está libre acá.
-     Los turnos donde la clienta no asistió liberan el horario. */
-  lineasDe(fecha, l=>l.profId===profId && l.estado!=='no').forEach(l=> ocup.push([mh(l.hora), mh(l.hora)+l.dur]));
+  /* Misma fuente que usa Agenda y Fila. Durante un proceso no hay ocupación;
+     un fin real temprano libera el resto del bloque. */
+  ocupacionesDe(profId,fecha).forEach(o=>ocup.push([o.desde,o.hasta]));
   bloqueosDe(profId, fecha).forEach(b=> ocup.push([mh(b.desde), mh(b.hasta)]));
   if(h.pausaD) ocup.push([mh(h.pausaD), mh(h.pausaH)]);
-  ocup.sort((a,b)=>a[0]-b[0]);
+  const unidos=[];
+  ocup.map(([a,b])=>[Math.max(a,desde),Math.min(b,hasta)]).filter(([a,b])=>b>a)
+    .sort((a,b)=>a[0]-b[0]).forEach(([a,b])=>{
+      const u=unidos[unidos.length-1];
+      if(u && a<=u[1]) u[1]=Math.max(u[1],b); else unidos.push([a,b]);
+    });
   const out=[]; let t=desde;
-  ocup.forEach(([a,b])=>{ if(a>t && a>desde) out.push([t, Math.min(a,hasta)]); if(b>t) t=b; });
+  unidos.forEach(([a,b])=>{ if(a>t) out.push([t,a]); if(b>t) t=b; });
   if(t<hasta) out.push([t,hasta]);
   return out.filter(([a,b])=> b-a>=15);
 }
@@ -1911,23 +1997,22 @@ function hayQueForzar(profId, areaId, fecha, hora, servicioId){
 /* lo mismo para un turno que YA existe y se está moviendo o reasignando
    (no se cuenta a sí mismo como ocupación) */
 function forzarPara(profId, areaId, fecha, hora, servicioId, dur, exceptoLineaId){
-  const sv = byId(DB.servicios, servicioId); if(!sv) return true;
-  const h = horarioDe(profId, areaId, fecha);
-  const t = mh(hora), fin = t + (dur||sv.dur);
-  if(!h) return true;
-  if(t < mh(h.desde) || fin > mh(h.hasta)) return true;
-  if(h.pausaD && t < mh(h.pausaH) && fin > mh(h.pausaD)) return true;
-  if(bloqueosDe(profId, fecha).some(b=> t<mh(b.hasta) && fin>mh(b.desde))) return true;
-  const nuevos = sv.proceso>0 && sv.trabajo2>0
-    ? [[t,t+sv.trabajo1],[t+sv.trabajo1+sv.proceso, fin]]
-    : sv.proceso>0 ? [[t,t+sv.trabajo1]] : [[t,fin]];
-  return nuevos.some(([a,b])=> solapadas(profId, fecha, a, b, exceptoLineaId) >= sv.simult);
+  return !evaluarDisponibilidad({profId,areaId,fecha,desde:hora,servicioId,dur,exceptoLineaId}).ok;
 }
 let PEND = null;
-function confirmarConMotivo(titulo, avisos, textoBoton, fn, alt){
+const MOTIVOS_SOBRETURNO = [
+  'La profesional confirma que llega',
+  'La clienta acepta esperar',
+  'Autorizado por supervisión'
+];
+function confirmarConMotivo(titulo, avisos, textoBoton, fn, alt, rapidos){
   PEND = fn;
   sheet(titulo, `
     ${(avisos||[]).map(a=>`<div class="warnbox">${ic('alert','sm')} ${esc(a)}</div>`).join('')}
+    ${(rapidos&&rapidos.length)?`<div class="small muted" style="margin:10px 0 7px">Elegí un motivo:</div>
+      <div class="subtabs" style="padding:0 0 10px">${rapidos.map(m=>
+        `<button class="ptab" onclick="usarMotivoRapido('${encodeURIComponent(m)}')">${esc(m)}</button>`).join('')}</div>
+      <div class="small muted" style="margin-bottom:7px">O escribí otro:</div>`:''}
     <div class="f"><label>¿Por qué se hace igual?</label>
       <input id="mtv" placeholder="Motivo corto" autocomplete="off"></div>
     <div class="btns">
@@ -1942,6 +2027,10 @@ function hacerloIgual(){
   if(!m){ toast('Escribí el motivo'); return; }
   const f = PEND; PEND=null;
   if(f) f(m);
+}
+function usarMotivoRapido(m){
+  const f=PEND; PEND=null;
+  if(f) f(decodeURIComponent(m));
 }
 
 /* ============================================================
@@ -2746,6 +2835,16 @@ function guardarEnFila(){
 }
 
 /* ---------- pasa a atenderse ---------- */
+function disponibilidadFilaCon(f,pid,desde){
+  let reloj=desde==null?ahoraMin():desde;
+  for(const sid of filaServicios(f)){
+    const sv=byId(DB.servicios,sid); if(!sv) continue;
+    const r=evaluarDisponibilidad({profId:pid,areaId:f.areaId,fecha:f.fecha||hoy(),desde:reloj,servicioId:sid});
+    if(!r.ok) return {...r,razon:`${sv.nombre}: ${r.motivos[0]}`};
+    reloj+=sv.dur;
+  }
+  return {ok:true,desde:desde==null?ahoraMin():desde,hasta:reloj,motivos:[],razon:'Disponible ahora'};
+}
 function pasaAtenderse(fid){
   if(!puedeEditarAgenda()){ toast('No podés tocar la fila'); return; }
   const f=byId(DB.fila,fid); if(!f) return;
@@ -2753,9 +2852,9 @@ function pasaAtenderse(fid){
   const hacen = profesDelDia(f.areaId, hoy())
     .filter(p=>filaServicios(f).every(sid=>profesDe(f.areaId,sid).some(x=>x.id===p.id)));
   const pedida = f.profPedida ? byId(DB.profesionales,f.profPedida) : null;
-  const ocupada = pid => atendiendose().some(x=>x.profId===pid);
   const lista = pedida ? hacen.filter(p=>p.id===pedida.id) : hacen;
   const otras = pedida ? hacen.filter(p=>p.id!==pedida.id) : [];
+  const estado = p => disponibilidadFilaCon(f,p.id);
   sheet('¿Con quién pasa?', `
     <div class="card cardp" style="margin-bottom:12px">
       <div style="font-weight:700;font-size:16px">${esc(cl.nombre)}</div>
@@ -2764,35 +2863,44 @@ function pasaAtenderse(fid){
         filaServicios(f).map(id=>esc((byId(DB.servicios,id)||{}).nombre||'')).join(' · ')}</div>`:''}
     </div>
     ${pedida?`<div class="infobox">Pidió por <b>${esc(pedida.nombre)}</b>.</div>`:''}
-    <div class="listcard">${lista.length?lista.map(p=>`
+    <div class="listcard">${lista.length?lista.map(p=>{const d=estado(p); return `
       <button class="lr" onclick="hacerPasar('${fid}','${p.id}')">
         <div class="av">${ini(p.nombre)}</div>
         <div class="g"><b>${esc(p.nombre)}</b>
-          <span>${ocupada(p.id)?'Ahora está atendiendo':'Libre'}</span></div>
-        ${ic('chev','sm')}</button>`).join('')
+          <span>${esc(d.ok?'Disponible ahora':d.razon)}</span></div>
+        <span class="bd ${d.ok?'ok':'wa'}">${d.ok?'Libre':'Sobreturno'}</span></button>`;}).join('')
       :`<div class="empty">Hoy no hay nadie cargada para ese servicio.</div>`}</div>
     ${otras.length?`<div class="sep"></div>
       <div class="small muted" style="margin-bottom:7px">Si acepta que la atienda otra:</div>
-      <div class="listcard">${otras.map(p=>`
+      <div class="listcard">${otras.map(p=>{const d=estado(p); return `
         <button class="lr" onclick="hacerPasar('${fid}','${p.id}')">
           <div class="av">${ini(p.nombre)}</div>
-          <div class="g"><b>${esc(p.nombre)}</b><span>${ocupada(p.id)?'Ahora está atendiendo':'Libre'}</span></div>
-          ${ic('chev','sm')}</button>`).join('')}</div>`:''}`);
+          <div class="g"><b>${esc(p.nombre)}</b><span>${esc(d.ok?'Disponible ahora':d.razon)}</span></div>
+          <span class="bd ${d.ok?'ok':'wa'}">${d.ok?'Libre':'Sobreturno'}</span></button>`;}).join('')}</div>`:''}`);
 }
 
-function hacerPasar(fid, pid){
+function hacerPasar(fid, pid, motivoForzado){
   if(!puedeEditarAgenda()){ toast('No podés tocar la fila'); return; }
   const f=byId(DB.fila,fid); if(!f) return;
+  const disp=disponibilidadFilaCon(f,pid);
+  if(!disp.ok && motivoForzado===undefined){
+    const p=byId(DB.profesionales,pid);
+    return confirmarConMotivo('Sobreturno con '+(p?p.nombre.split(' ')[0]:'la profesional'),
+      disp.motivos.length?disp.motivos:[disp.razon], 'Pasar igual', m=>hacerPasar(fid,pid,m),
+      null, MOTIVOS_SOBRETURNO);
+  }
   /* un renglón por cada cosa que se hace: la de depilación se hace media
      pierna, axilas y cavado, y cada una tiene su precio y su comisión */
-  let reloj = mh(horaAhora());
+  const inicio=horaAhora();
+  let reloj = mh(inicio);
   const lineas = filaServicios(f).map(sid=>{
     const sv = byId(DB.servicios, sid); if(!sv) return null;
     const pq = paqueteActivo(f.clientaId, sid);
     const l = {id:uid('ln'), servicioId:sid, profId:pid, areaId:f.areaId,
       hora:hm(reloj), dur:sv.dur, estado:'serv', precio:sv.contado, descuento:0,
       comisionPct:comisionPctPara(pid, f.areaId, sv.id), comisionAuto:true, exenta:false, motivo:'',
-      paqueteId: pq?pq.id:null, voucherId:null, consumida:false, liqId:null, forzado:'',
+      paqueteId: pq?pq.id:null, voucherId:null, consumida:false, liqId:null,
+      forzado:motivoForzado||'',
       sinTurno:true};
     reloj += sv.dur;
     return l;
@@ -2801,8 +2909,9 @@ function hacerPasar(fid, pid){
   const v = {id:uid('vi'), clientaId:f.clientaId, sucursalId:f.sucursalId, fecha:hoy(),
     creada:new Date().toISOString(), lineas, pagos:[], sinTurno:true};
   DB.visitas.push(v);
-  f.estado='at'; f.visitaId=v.id; f.profId=pid; f.desde=horaAhora();
-  logAcc(`Pasó a atenderse: ${byId(DB.clientas,f.clientaId).nombre} con ${byId(DB.profesionales,pid).nombre}`);
+  f.estado='at'; f.visitaId=v.id; f.profId=pid; f.desde=inicio;
+  if(motivoForzado) f.forzado=motivoForzado;
+  logAcc(`Pasó a atenderse: ${byId(DB.clientas,f.clientaId).nombre} con ${byId(DB.profesionales,pid).nombre}${motivoForzado?' — SOBRETURNO: '+motivoForzado:''}`);
   save(); closeSheet(); render();
   toast('Pasó a atenderse');
 }
@@ -2811,8 +2920,9 @@ function terminoFila(fid){
   if(!puedeEditarAgenda()){ toast('No podés tocar la fila'); return; }
   const f=byId(DB.fila,fid); if(!f) return;
   const v=f.visitaId?byId(DB.visitas,f.visitaId):null;
+  const fin=horaAhora();
   if(v) v.lineas.forEach(l=>{ if(l.estado==='serv') l.estado='fin'; });
-  f.estado='fin'; f.hasta=horaAhora();
+  f.estado='fin'; f.hasta=fin;
   save(); render();
   if(v && puedeCobrar()) setTimeout(()=>cobrar(v.id), 300);
 }
@@ -2832,6 +2942,41 @@ function hacerSeFue(fid){
   f.estado='fue'; f.hasta=horaAhora();
   logAcc(`Se fue sin atenderse: ${byId(DB.clientas,f.clientaId).nombre}`);
   save(); closeSheet(); render(); toast('Anotado');
+}
+
+function corregirHorarioFila(fid){
+  if(!puedeEditarAgenda()){ toast('No podés corregir horarios'); return; }
+  const f=byId(DB.fila,fid); if(!f || !['at','fin'].includes(f.estado)) return;
+  sheet('Corregir horario de la atención', `
+    <div class="infobox">Corregí la hora si se tocó Pasa o Terminó tarde. Se mantiene una sola
+      atención aunque tenga varios servicios.</div>
+    <div class="f"><label>Empezó realmente</label>
+      <input type="time" id="hrfini" value="${esc(f.desde||f.llegada||'')}"></div>
+    ${f.estado==='fin'?`<div class="f"><label>Terminó realmente</label>
+      <input type="time" id="hrffin" value="${esc(f.hasta||'')}"></div>`:
+      `<div class="small muted" style="margin-bottom:12px">Todavía está atendiéndose. El fin se guarda con Terminó.</div>`}
+    <button class="btn" onclick="guardarHorarioFila('${fid}')">Guardar corrección</button>
+    <button class="btn sec" style="margin-top:8px" onclick="closeSheet()">Cancelar</button>`);
+}
+function guardarHorarioFila(fid){
+  if(!puedeEditarAgenda()){ toast('No podés corregir horarios'); return; }
+  const f=byId(DB.fila,fid); if(!f || !['at','fin'].includes(f.estado)) return;
+  const inicio=(document.getElementById('hrfini').value||'').trim();
+  const campoFin=document.getElementById('hrffin');
+  const fin=campoFin?(campoFin.value||'').trim():'';
+  if(!/^\d\d:\d\d$/.test(inicio)){ toast('Poné la hora en que empezó'); return; }
+  if(f.estado==='fin' && !/^\d\d:\d\d$/.test(fin)){ toast('Poné la hora en que terminó'); return; }
+  if(fin && mh(fin)<=mh(inicio)){ toast('La hora de fin tiene que ser posterior al inicio'); return; }
+  const antes=`${f.desde||'—'} a ${f.hasta||'—'}`;
+  f.desde=inicio; if(fin) f.hasta=fin;
+  const v=f.visitaId?byId(DB.visitas,f.visitaId):null;
+  if(v){
+    let reloj=mh(inicio);
+    v.lineas.forEach(l=>{ l.hora=hm(reloj); reloj+=Number(l.dur||0); });
+  }
+  const cl=byId(DB.clientas,f.clientaId);
+  logAcc(`${cl?cl.nombre:'Clienta'}: horario de fila corregido de ${antes} a ${inicio} a ${fin||'en curso'}`);
+  save(); closeSheet(); render(); toast('Horario corregido');
 }
 
 /* el número de tiquera: papelito preimpreso que trae la clienta */
@@ -2881,13 +3026,16 @@ function puedePasar(f){
     const p = byId(DB.profesionales, f.profPedida);
     if(!posibles.some(x=>x.id===f.profPedida))
       return {ok:false, razon:(p?p.nombre.split(' ')[0]:'Esa profesional')+' hoy no trabaja acá'};
-    if(profOcupada(f.profPedida))
-      return {ok:false, razon:'Espera a '+(p?p.nombre.split(' ')[0]:'ella')+' · está atendiendo'};
-    return {ok:true};
+    const d=disponibilidadFilaCon(f,f.profPedida);
+    if(!d.ok) return {ok:false, razon:'Espera a '+(p?p.nombre.split(' ')[0]:'ella')+' · '+d.razon};
+    return {ok:true,profId:f.profPedida};
   }
-  const libre = posibles.find(p=>!profOcupada(p.id));
-  if(!libre) return {ok:false, razon:'Todas ocupadas ahora'};
-  return {ok:true};
+  const libre = posibles.map(p=>({p,d:disponibilidadFilaCon(f,p.id)})).find(x=>x.d.ok);
+  if(!libre){
+    const d=disponibilidadFilaCon(f,posibles[0].id);
+    return {ok:false, razon:d.razon||'Todas ocupadas ahora'};
+  }
+  return {ok:true,profId:libre.p.id};
 }
 /* la primera de CADA área que puede pasar: esa es la que sigue */
 function lasQueSiguen(){
@@ -2900,6 +3048,13 @@ function lasQueSiguen(){
 }
 
 /* ---------- la pantalla ---------- */
+
+/* Aviso solamente: el sistema nunca termina una atención por reloj. */
+function minutosPasado(inicio, duracion, abierto, ahora){
+  if(!abierto || !inicio) return 0;
+  const actual=ahora==null?ahoraMin():ahora;
+  return Math.max(0, actual-(mh(inicio)+Number(duracion||0)));
+}
 
 /* Los contadores del inicio antes eran cartelitos muertos: decían un
    número y no hacían nada. Ahora cada uno abre la lista de esos turnos. */
@@ -2937,6 +3092,7 @@ function vFila(){
     const pr  = f.profId?byId(DB.profesionales,f.profId):null;
     const pp  = modo==='esp' ? puedePasar(f) : {ok:true};
     const sigue = siguen.has(f.id);
+    const pasado = minutosPasado(f.desde||f.llegada, filaDur(f), modo==='at');
     return `<div class="fr fr-${modo}${(modo==='esp'&&!pp.ok)?' trabada':''}${sigue?' sigue':''}">
       <div class="fic">${a?a.icono:'•'}</div>
       <div class="g">
@@ -2946,6 +3102,8 @@ function vFila(){
           .map(id=>esc((byId(DB.servicios,id)||{}).nombre||'')).join(' · ')}</span>`:''}
         ${(ped&&modo==='esp'&&pp.ok)?`<span class="pide">${ic('user','sm')} Pide por ${esc(ped.nombre.split(' ')[0])}</span>`:''}
         ${(modo==='esp'&&!pp.ok)?`<span class="trab">${esc(pp.razon)}</span>`:''}
+        ${f.forzado?`<span class="trab">Sobreturno: ${esc(f.forzado)}</span>`:''}
+        ${pasado?`<span class="trab">Sigue abierto · pasó ${pasado} min de lo previsto</span>`:''}
         ${f.tiquera?`<span class="tiny muted">Tiquera ${esc(f.tiquera)}</span>`:''}
       </div>
       <div class="fder">
@@ -2953,7 +3111,8 @@ function vFila(){
           :`<span class="tiny muted">desde ${esc(f.desde||f.llegada)}</span>`}
         ${puedeEditarAgenda()?(modo==='esp'
           ? `<button class="btn sm ${pp.ok?'':'sec'}" onclick="pasaAtenderse('${f.id}')">Pasa</button>`
-          : `<button class="btn sm ok" onclick="terminoFila('${f.id}')">Terminó</button>`):''}
+          : `<button class="btn xs sec" onclick="corregirHorarioFila('${f.id}')">Hora</button>
+             <button class="btn sm ok" onclick="terminoFila('${f.id}')">Terminó</button>`):''}
       </div>
     </div>`;
   };
@@ -2995,7 +3154,8 @@ function vFila(){
         <div class="av">${a?a.icono:'•'}</div>
         <div class="g"><b>${esc(c?c.nombre:'—')}</b>
           <span>${esc(filaNombre(f))} · ${f.estado==='fue'?'se fue sin atenderse':'terminó '+esc(f.hasta||'')}</span></div>
-        ${(f.estado==='fin'&&puedeEditarAgenda())?`<button class="btn sm sec" onclick="ponerTiquera('${f.id}')">Tiquera</button>`:''}
+        ${(f.estado==='fin'&&puedeEditarAgenda())?`<button class="btn sm sec" onclick="corregirHorarioFila('${f.id}')">Horario</button>
+          <button class="btn sm sec" onclick="ponerTiquera('${f.id}')">Tiquera</button>`:''}
       </div>`;}).join('')}</div>`:''}
 
     ${esp.length&&puedeEditarAgenda()?`<div class="sep"></div>
@@ -3457,22 +3617,20 @@ function agendaDelDia(area, profes){
     }
     const eventos = ls.map(l=>{
       const cl=byId(DB.clientas,l.visita.clientaId), sv=byId(DB.servicios,l.servicioId);
-      const top=y(mh(l.hora)), alt=Math.max(16, l.dur/PASO*H);
-      const w=100/l._n, left=l._c*w;
-      const col='var(--b-'+l.estado+')';
-      let proceso='';
-      if(sv && sv.proceso>0 && sv.trabajo2>0){
-        proceso = `<i class="pr" style="top:${sv.trabajo1/PASO*H}px;height:${sv.proceso/PASO*H}px"></i>`;
-      }
+      const w=100/l._n, left=l._c*w, col='var(--b-'+l.estado+')';
       const nom = cl?cl.nombre.split(' ')[0]+' '+((cl.nombre.split(' ')[1]||'')[0]||''):'';
-      return `<div class="ev ${alt<30?'mini':''}" style="top:${top}px;height:${alt-2}px;left:${left}%;width:${w}%;
-        background:${col};${l.estado==='fin'?'opacity:.78;':''}"
-        onclick="event.stopPropagation();abrirTurno('${l.visita.id}','${l.id}')">
-        ${proceso}
-        <b>${esc(nom)}</b>
-        ${alt>=40?`<em>${esc(sv?sv.nombre:'')}</em>`:''}
-        ${alt>=72?`<em>${EST[l.estado].n}</em>`:''}
-      </div>`;
+      let tramos=tramosOcupados(l);
+      if(!tramos.length) tramos=[[mh(l.hora),mh(l.hora)+15]];
+      return tramos.map(([a,b],ix)=>{
+        const top=y(a), alt=Math.max(16,(b-a)/PASO*H);
+        return `<div class="ev ${alt<30?'mini':''}" style="top:${top}px;height:${alt-2}px;left:${left}%;width:${w}%;
+          background:${col};${l.estado==='fin'?'opacity:.78;':''}"
+          onclick="event.stopPropagation();abrirTurno('${l.visita.id}','${l.id}')">
+          <b>${esc(nom)}${ix?' · vuelve':''}</b>
+          ${alt>=40?`<em>${esc(sv?sv.nombre:'')}</em>`:''}
+          ${alt>=72?`<em>${EST[l.estado].n}</em>`:''}
+        </div>`;
+      }).join('');
     }).join('');
     return `<div class="col" onclick="clicAgenda(event,'${p.id}')" style="height:${alto}px">
       ${fondo}${libres}${eventos}</div>`;
@@ -3605,10 +3763,13 @@ function agendaGrilla(area, profes){
   profes.forEach(p=>{
     ocup[p.id]={};
     dia.filter(l=>l.profId===p.id).forEach(l=>{
-      const s=mh(l.hora), e=s+l.dur;
-      for(let t=s;t<e;t+=paso){
-        (ocup[p.id][t] = ocup[p.id][t] || []).push({l, primero:t===s, ultimo:t+paso>=e});
-      }
+      const tramos=tramosOcupados(l);
+      tramos.forEach(([s,e],ix)=>{
+        const a=Math.floor(s/paso)*paso;
+        for(let t=a;t<e;t+=paso){
+          (ocup[p.id][t] = ocup[p.id][t] || []).push({l, primero:ix===0&&t===a, ultimo:t+paso>=e});
+        }
+      });
     });
   });
 
@@ -3663,6 +3824,8 @@ function abrirTurno(visitaId, lineaId){
       <div class="kv"><span class="muted">Servicio</span><b>${esc(sv.nombre)}</b></div>
       <div class="kv"><span class="muted">Profesional</span><b>${esc(pr.nombre)}</b></div>
       <div class="kv"><span class="muted">Horario</span><b>${l.hora} – ${hm(mh(l.hora)+l.dur)}</b></div>
+      ${l.inicioReal?`<div class="kv"><span class="muted">Horario real</span><b>${l.inicioReal}${l.finReal?' – '+l.finReal:' – en curso'}</b></div>`:''}
+      ${(l.inicioReal&&l.finReal)?`<div class="kv"><span class="muted">Duración</span><b>Prevista ${l.dur} min · real ${Math.max(0,mh(l.finReal)-mh(l.inicioReal))} min</b></div>`:''}
       <div class="kv"><span class="muted">Estado</span><b style="display:inline-flex;align-items:center;gap:6px"><i class="dot d-${l.estado}"></i>${EST[l.estado].n}</b></div>
       ${sv.proceso>0?`<div class="kv"><span class="muted">Tiene proceso</span><b>${sv.trabajo1}′ + ${sv.proceso}′ libre + ${sv.trabajo2}′</b></div>`:''}
       ${l.paqueteId?(()=>{const pq=byId(DB.paquetes,l.paqueteId);
@@ -3691,7 +3854,9 @@ function abrirTurno(visitaId, lineaId){
       ${saldo>0 && puedeCobrar()?`<button class="btn pay" onclick="cobrar('${v.id}')">${ic('cash','sm')} Cobrar ${money(saldo)}</button>`:''}
       ${puedeEditarAgenda()?`<button class="btn sec" onclick="moverTurno('${v.id}','${l.id}')">Cambiar hora</button>
       <button class="btn sec" onclick="cambiarProfesional('${v.id}','${l.id}')">Cambiar profesional</button>
-      <button class="btn sec" onclick="cambiarServicio('${v.id}','${l.id}')">Cambiar servicio</button>`:''}
+      <button class="btn sec" onclick="cambiarServicio('${v.id}','${l.id}')">Cambiar servicio</button>
+      ${(!v.sinTurno && (l.inicioReal || ['serv','fin'].includes(l.estado)))
+        ?`<button class="btn sec" onclick="editarHorarioReal('${v.id}','${l.id}')">Corregir horario real</button>`:''}`:''}
       ${puedeVerTelefono()?`<a class="btn wa" href="${waLink(cl.tel, msgConfirmacion(v,l))}" target="_blank">${ic('wa','sm')} WhatsApp</a>`:''}
       ${puedeVerClientas()?`<button class="btn sec" onclick="go('ficha',{clientaId:'${cl.id}',fichaFrom:'agenda'})">${ic('user','sm')} Ficha de ${esc(cl.nombre.split(' ')[0])}</button>`:''}
       ${puedeEditarAgenda()?`<button class="btn sec" onclick="agregarServicio('${v.id}')">Agregar servicio</button>`:''}
@@ -3706,10 +3871,42 @@ function msgConfirmacion(v,l){
   const conQuien = pr ? ` con ${pr.nombre.split(' ')[0]}` : '';
   return `Hola ${(cl.nombre||'').split(' ')[0]}! Te recordamos tu turno en ${DB.cfg.negocio} ${su.nombre}: ${sv.nombre}${conQuien}, el ${fechaLarga(v.fecha)} a las ${l.hora}. ¿Nos confirmás?`;
 }
+function editarHorarioReal(vid,lid){
+  if(!puedeEditarAgenda()){ toast('No podés corregir horarios'); return; }
+  const v=byId(DB.visitas,vid), l=v&&byId(v.lineas,lid); if(!v||!l||v.sinTurno) return;
+  sheet('Corregir horario real', `
+    <div class="infobox">Usalo si se tocó Empezar o Finalizar tarde. El turno previsto no cambia:
+      sólo se corrige lo que realmente pasó.</div>
+    <div class="f"><label>Empezó realmente</label>
+      <input type="time" id="hrini" value="${esc(l.inicioReal||l.hora||'')}"></div>
+    <div class="f"><label>Terminó realmente${l.estado==='fin'?'':' (dejalo vacío si sigue)'}</label>
+      <input type="time" id="hrfin" value="${esc(l.finReal||'')}"></div>
+    <button class="btn" onclick="guardarHorarioReal('${vid}','${lid}')">Guardar corrección</button>
+    <button class="btn sec" style="margin-top:8px" onclick="closeSheet()">Cancelar</button>`);
+}
+function guardarHorarioReal(vid,lid){
+  if(!puedeEditarAgenda()){ toast('No podés corregir horarios'); return; }
+  const v=byId(DB.visitas,vid), l=v&&byId(v.lineas,lid); if(!v||!l||v.sinTurno) return;
+  const inicio=(document.getElementById('hrini').value||'').trim();
+  const fin=(document.getElementById('hrfin').value||'').trim();
+  if(!/^\d\d:\d\d$/.test(inicio)){ toast('Poné la hora en que empezó'); return; }
+  if(fin && !/^\d\d:\d\d$/.test(fin)){ toast('Poné una hora de fin válida'); return; }
+  if(l.estado==='fin' && !fin){ toast('Poné la hora en que terminó'); return; }
+  if(fin && mh(fin)<=mh(inicio)){ toast('La hora de fin tiene que ser posterior al inicio'); return; }
+  const antes=`${l.inicioReal||'—'} a ${l.finReal||'—'}`;
+  l.inicioReal=inicio;
+  if(fin) l.finReal=fin; else delete l.finReal;
+  const cl=byId(DB.clientas,v.clientaId);
+  logAcc(`${cl?cl.nombre:'Clienta'}: horario real corregido de ${antes} a ${inicio} a ${fin||'en curso'}`);
+  save(); closeSheet(); render(); toast('Horario real corregido');
+}
 function cambiarEstado(vid,lid,est,desdeFicha){
   const v=byId(DB.visitas,vid), l=byId(v.lineas,lid);
   if(!puedeMarcarEstado(l, est)){ toast('No podés modificar turnos'); return; }
   ST.ultimoTocado = lid;
+  /* La hora prevista nunca se pisa: inicioReal y finReal cuentan lo que pasó. */
+  if(est==='serv' && !l.inicioReal) l.inicioReal=horaAhora();
+  if(est==='fin' && !l.finReal) l.finReal=horaAhora();
   /* La tasa se fija cuando empieza el trabajo; un turno reservado todavía puede
      reflejar un cambio de comisión habitual. Los ajustes manuales no se pisan. */
   if(est==='serv' && l.comisionAuto===true)
@@ -3782,7 +3979,8 @@ function hacerMover(vid,lid,hora,forzar){
     const av = avisosDeTurno(l.profId, l.areaId, v.fecha, mh(hora), l.dur, l.id);
     return confirmarConMotivo('Mover a las '+hora,
       av.length?av:['Ese horario no está libre.'],
-      'Moverlo igual a las '+hora, m=>aplicarMover(vid,lid,hora,m));
+      'Moverlo igual a las '+hora, m=>aplicarMover(vid,lid,hora,m),
+      null, MOTIVOS_SOBRETURNO);
   }
   aplicarMover(vid,lid,hora,'');
 }
@@ -3826,7 +4024,7 @@ function hacerCambioServicio(vid,lid,svId){
     const av=avisosDeTurno(l.profId, l.areaId, v.fecha, mh(l.hora), nuevo.dur, l.id);
     return confirmarConMotivo('El servicio nuevo no entra',
       av.concat([`${nuevo.nombre} dura ${nuevo.dur} min y el turno arranca ${l.hora}.`]),
-      'Cambiarlo igual', aplicar);
+      'Cambiarlo igual', aplicar, null, MOTIVOS_SOBRETURNO);
   }
   aplicar('');
 }
@@ -3850,7 +4048,8 @@ function hacerCambioProf(vid,lid,pid){
     const av = avisosDeTurno(pid, l.areaId, v.fecha, mh(l.hora), l.dur, l.id);
     return confirmarConMotivo('Pasar a '+byId(DB.profesionales,pid).nombre.split(' ')[0],
       av.length?av:['No está libre en ese horario.'],
-      'Pasarla igual', m=>aplicarCambioProf(vid,lid,pid,m));
+      'Pasarla igual', m=>aplicarCambioProf(vid,lid,pid,m),
+      null, MOTIVOS_SOBRETURNO);
   }
   aplicarCambioProf(vid,lid,pid,'');
 }
@@ -4061,7 +4260,8 @@ function pasoProfesional(){
         av.length?av:['A las '+NT.hora+' no entra '+sv.nombre+' con '+(p0?p0.nombre.split(' ')[0]:'ella')+'.'],
         'Cargarlo igual a las '+NT.hora,
         m=>{ NT.motivo=m; trasElegirHorario(); },
-        {texto:'Ver horarios libres', accion:"NT.profId=null;NT.hora=null;pasoProfesional()"});
+        {texto:'Ver horarios libres', accion:"NT.profId=null;NT.hora=null;pasoProfesional()"},
+        MOTIVOS_SOBRETURNO);
     }
     NT.aviso = (p0?p0.nombre.split(' ')[0]:'Esa profesional')+' no tiene habilitado '+sv.nombre+'. Elegí a otra.';
     NT.profId=null; NT.hora=null;
@@ -4494,11 +4694,13 @@ function filaDelDia({v,l,acc,urg}){
   const cl=byId(DB.clientas,v.clientaId), sv=byId(DB.servicios,l.servicioId)||{};
   const pr=byId(DB.profesionales,l.profId);
   const puede = acc.k==='cobrar' ? puedeCobrar() : puedeMarcarEstado(l, acc.k);
+  const pasado = minutosPasado(l.inicioReal||l.hora, l.dur, l.estado==='serv');
   return `<div class="ahr ${urg?'n':''}">
     <div class="hh2">${l.hora}</div>
     <button class="g2" onclick="abrirTurno('${v.id}','${l.id}')">
       <b>${esc(cl?cl.nombre:'—')}</b>
       <span>${esc(sv.nombre||'')}${pr?' · '+esc(pr.nombre.split(' ')[0]):''}</span>
+      ${pasado?`<span class="trab">Sigue abierto · pasó ${pasado} min de lo previsto</span>`:''}
     </button>
     ${puede
       ? `<button class="btn xs ${acc.c}" onclick="${acc.k==='cobrar'?`cobrar('${v.id}')`:`cambiarEstado('${v.id}','${l.id}','${acc.k}',0)`}">${acc.t}</button>`
@@ -6068,7 +6270,8 @@ function confirmarReubicar(pid, fecha, destId){
   if(!mueve){ toast(d.nombre.split(' ')[0]+' no hace ninguno de esos servicios'); return; }
   if(avisos.length)
     return confirmarConMotivo(`Pasar ${mueve} a ${d.nombre.split(' ')[0]}`, avisos,
-      `Pasárselos igual`, m=>hacerReubicar(pid, fecha, destId, m));
+      `Pasárselos igual`, m=>hacerReubicar(pid, fecha, destId, m),
+      null, MOTIVOS_SOBRETURNO);
   hacerReubicar(pid, fecha, destId, '');
 }
 function hacerReubicar(pid, fecha, destId, motivo){
@@ -9305,7 +9508,7 @@ render();
    Julián actualizaba y no veía los cambios. Cada vez que se abre,
    la app se fija sola si hay una más nueva y se recarga.
    ============================================================ */
-const VERSION_ISIS = 17;
+const VERSION_ISIS = 18;
 async function mirarSiHayNueva(){
   if(location.protocol === 'file:') return;
   try{
