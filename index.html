@@ -648,10 +648,13 @@ function precioSegunMedio(contado, medio){
 const AREAS_CON_TURNO = ['Cejas y pestañas','Ojos','Depilación definitiva',
   'Masajes y tratamientos','Masajes','Tratamientos'];
 const RECORDATORIO_DEF = 'Hola {nombre}! Te recordamos que {dia} a las {hora} hs tenés turno para {servicios} en el local de {local}. Te esperamos 💛 Si no podés venir, avisanos lo antes posible por favor.';
+/* La opción inicial no impone una regla comercial: deja la seña visible y libre. */
+const SENA_DEF = {modo:'opcional', tipo:'libre', valor:0};
 
 function seed(){
   const D = { cfg:{negocio:'ISIS', recargo:15, redondeo:500, diasSinVenir:60,
         permisos: JSON.parse(JSON.stringify(PERM_DEF)),
+        sena: {...SENA_DEF},
         recordatorioVispera:RECORDATORIO_DEF, recordatorioMismoDia:RECORDATORIO_DEF},
     sucursales:[], areas:[], servicios:[], profesionales:[], asign:[], horarios:[],
     bloqueos:[], clientas:[], visitas:[], espera:[], caja:[], gastos:[],
@@ -752,7 +755,7 @@ function seed(){
     (svcByArea[a.nombre]||[]).forEach(s=>{
       D.servicios.push({id:uid('sv'), areaId:a.id, nombre:s[0], dur:s[1],
         trabajo1:s[2], proceso:s[3], trabajo2:s[4], simult:s[5],
-        contado:s[6], comision:s[7], precioManual:false, activo:true});
+        contado:s[6], comision:s[7], sena:null, precioManual:false, activo:true});
     });
   });
 
@@ -1176,7 +1179,7 @@ function seed(){
   /* el libro de caja de los datos de ejemplo */
   const _db = DB; DB = D; D.mov = armarLibroDesdeLoViejo(); DB = _db;
   D.cfg.fondoCaja = 20000;
-  D.cfg.v = 8;
+  D.cfg.v = 9;
   return D;
 }
 
@@ -1281,6 +1284,16 @@ function migrar(){
     DB.cfg.v = 7;
   }
   if(DB.cfg.v < 8) DB.cfg.v = 8;
+  /* v9: política de señas. Los servicios heredan la regla general salvo
+     que administración configure una excepción explícita. */
+  if(DB.cfg.v < 9){
+    if(!DB.cfg.sena) DB.cfg.sena={...SENA_DEF};
+    (DB.servicios||[]).forEach(s=>{ if(s.sena===undefined) s.sena=null; });
+    DB.cfg.v=9;
+  }
+  DB.cfg.sena=normalizarSena(DB.cfg.sena);
+  (DB.servicios||[]).forEach(s=>{ if(s.sena===undefined) s.sena=null;
+    else if(s.sena) s.sena=normalizarSena(s.sena); });
   if(DB.cfg.pedirPin===undefined) DB.cfg.pedirPin = false;
   /* volver a entrar como la última vez que se usó este aparato */
   if(DB.cfg.ultimoUsuario && byId(DB.usuarios, DB.cfg.ultimoUsuario)){
@@ -1860,6 +1873,86 @@ function saldoVisita(v){ return totalVisita(v) - pagadoVisita(v); }
 function aCobrarCon(saldoContado, medio){
   const M = MEDIOS.find(m=>m.k===medio);
   return (M && M.rec) ? precioLista(saldoContado) : saldoContado;
+}
+const SENA_RANGO={no:0, opcional:1, sugerir:2, requerir:3};
+function normalizarSena(regla){
+  const r=(regla&&typeof regla==='object')?regla:SENA_DEF;
+  const modo=Object.prototype.hasOwnProperty.call(SENA_RANGO,r.modo)?r.modo:SENA_DEF.modo;
+  const tipo=['libre','fijo','porcentaje'].includes(r.tipo)?r.tipo:SENA_DEF.tipo;
+  let valor=Math.max(0,Number(r.valor)||0);
+  if(tipo==='porcentaje') valor=Math.min(100,valor);
+  return {modo,tipo,valor};
+}
+function politicaSena(servicio){
+  return normalizarSena(servicio&&servicio.sena ? servicio.sena : DB.cfg.sena);
+}
+function nombreModoSena(modo){
+  return {no:'No pedir seña',opcional:'Seña opcional',sugerir:'Seña sugerida',requerir:'Seña obligatoria'}[modo]||'Seña opcional';
+}
+function descripcionPoliticaSena(regla, precio){
+  const p=normalizarSena(regla);
+  if(p.modo==='no') return 'No pide seña';
+  let importe='importe libre';
+  if(p.tipo==='fijo') importe=money(p.valor);
+  if(p.tipo==='porcentaje') importe=Number.isFinite(+precio)
+    ? money(Math.round(Math.max(0,+precio)*p.valor/100))
+    : p.valor+'% del servicio';
+  return nombreModoSena(p.modo)+' · '+importe;
+}
+function senasVivas(v){ return pagosVivos(v).filter(p=>p.tipo==='sena'); }
+/* Una seña pertenece a la visita. Si hay varios servicios se combinan las
+   reglas más exigentes; una regla libre nunca inventa un importe. */
+function resumenSena(v){
+  const candidatas=(v.lineas||[]).filter(l=>l.estado!=='can' && !cubierta(l)).map(l=>{
+    /* La regla queda copiada al reservar: cambiar Configuración no convierte
+       de golpe todos los turnos viejos en reservas obligatorias. */
+    const p=l.sena?normalizarSena(l.sena):{modo:'no',tipo:'libre',valor:0};
+    const base=Math.max(0,(+l.precio||0)-(+l.descuento||0));
+    const monto=p.tipo==='fijo'?Math.min(base,p.valor)
+      :(p.tipo==='porcentaje'?Math.round(base*p.valor/100):null);
+    return {p,monto};
+  }).filter(x=>x.p.modo!=='no');
+  const recibido=senasVivas(v).reduce((s,p)=>s+(p.contado!=null?p.contado:p.importe),0);
+  if(!candidatas.length) return {hay:recibido>0,modo:'no',objetivo:0,pendiente:0,
+    recibido,completa:true,libre:false};
+  const rango=Math.max(...candidatas.map(x=>SENA_RANGO[x.p.modo]));
+  const relevantes=candidatas.filter(x=>SENA_RANGO[x.p.modo]===rango);
+  const modo=relevantes[0].p.modo, libre=relevantes.some(x=>x.monto===null);
+  const objetivo=libre?null:Math.min(totalVisita(v),relevantes.reduce((s,x)=>s+x.monto,0));
+  const saldo=Math.max(0,saldoVisita(v));
+  const pendiente=objetivo===null?null:Math.max(0,Math.min(objetivo-recibido,saldo));
+  const completa=saldo<=0 || (objetivo===null?recibido>0:pendiente<=0);
+  return {hay:true,modo,objetivo,pendiente,recibido,completa,libre};
+}
+function textoEstadoSena(r){
+  if(r.recibido>0){
+    if(r.pendiente>0) return `Seña aplicada ${money(r.recibido)} · faltan ${money(r.pendiente)}`;
+    return `Seña aplicada ${money(r.recibido)}${r.modo==='no'?'':' · completa'}`;
+  }
+  if(r.modo==='no') return 'Sin seña';
+  return r.objetivo===null
+    ? nombreModoSena(r.modo)+' · importe libre'
+    : nombreModoSena(r.modo)+' '+money(r.objetivo)+' · pendiente';
+}
+function opcionesModoSena(actual, hereda){
+  const xs=hereda?[['hereda','Usar la regla general']]:[];
+  xs.push(['no','No pedir'],['opcional','Opcional'],['sugerir','Sugerida'],['requerir','Obligatoria']);
+  return xs.map(([k,n])=>`<option value="${k}" ${actual===k?'selected':''}>${n}</option>`).join('');
+}
+function opcionesTipoSena(actual){
+  return [['libre','Importe libre'],['fijo','Importe fijo'],['porcentaje','Porcentaje del servicio']]
+    .map(([k,n])=>`<option value="${k}" ${actual===k?'selected':''}>${n}</option>`).join('');
+}
+function leerSenaFormulario(prefijo, permiteHereda){
+  const modo=document.getElementById(prefijo+'m').value;
+  if(permiteHereda && modo==='hereda') return {ok:true,regla:null};
+  const tipo=document.getElementById(prefijo+'t').value;
+  const valor=+document.getElementById(prefijo+'v').value||0;
+  if(modo!=='no' && tipo==='fijo' && valor<=0){ toast('Poné el importe de la seña'); return {ok:false}; }
+  if(modo!=='no' && tipo==='porcentaje' && (valor<=0||valor>100)){
+    toast('El porcentaje tiene que estar entre 1 y 100'); return {ok:false};
+  }
+  return {ok:true,regla:normalizarSena(modo==='no'?{modo,tipo:'libre',valor:0}:{modo,tipo,valor})};
 }
 function comisionLinea(l){
   if(l.exenta) return 0;
@@ -3805,6 +3898,7 @@ function abrirTurno(visitaId, lineaId){
   const cl = byId(DB.clientas, v.clientaId), sv = byId(DB.servicios, l.servicioId);
   const pr = byId(DB.profesionales, l.profId);
   const saldo = saldoVisita(v);
+  const sr = resumenSena(v);
   const otras = v.lineas.filter(x=>x.id!==l.id && x.estado!=='can');
 
   const acciones = {
@@ -3837,8 +3931,11 @@ function abrirTurno(visitaId, lineaId){
         ?`<div class="kv"><span class="muted">${puedeVerComisiones()?'Comisión de '+esc(pr.nombre.split(' ')[0]):'Tu comisión'}</span><b>${l.exenta?'Exenta':money(comisionLinea(l))+' ('+l.comisionPct+'%)'}</b></div>`:''}
       ${puedeCobrar()?(saldo>0?`<div class="kv"><span class="muted">Saldo de esta visita</span><b style="color:var(--warn)">${money(saldo)}</b></div>`:
                  `<div class="kv"><span class="muted">Pago</span><b style="color:var(--ok)">Al día</b></div>`):''}
+      ${(verPlata&&sr.hay)?`<div class="kv"><span class="muted">Reserva</span>
+        <b style="color:${sr.modo==='requerir'&&!sr.completa?'var(--warn)':'var(--ink)'}">${esc(textoEstadoSena(sr))}</b></div>`:''}
     </div>
     ${l.forzado?`<div class="warnbox">${ic('alert','sm')} Turno forzado: ${esc(l.forzado)}</div>`:''}
+    ${(sr.modo==='requerir'&&!sr.completa)?`<div class="warnbox">${ic('alert','sm')} La seña obligatoria sigue pendiente. El turno continúa reservado.</div>`:''}
     ${otras.length?`<div class="infobox">Esta visita tiene ${otras.length} servicio${otras.length>1?'s':''} más:
       ${otras.map(o=>esc(byId(DB.servicios,o.servicioId).nombre)+' '+o.hora).join(' · ')}</div>`:''}
     ${cl.notas?`<div class="warnbox">${ic('alert','sm')} ${esc(cl.notas)}</div>`:''}
@@ -3851,6 +3948,7 @@ function abrirTurno(visitaId, lineaId){
     </div>`:''; })()}
 
     <div class="btns">
+      ${(saldo>0&&sr.hay&&!sr.completa&&puedeCobrar())?`<button class="btn pay" onclick="abrirSena('${v.id}')">${ic('cash','sm')} Registrar seña${sr.pendiente>0?' '+money(sr.pendiente):''}</button>`:''}
       ${saldo>0 && puedeCobrar()?`<button class="btn pay" onclick="cobrar('${v.id}')">${ic('cash','sm')} Cobrar ${money(saldo)}</button>`:''}
       ${puedeEditarAgenda()?`<button class="btn sec" onclick="moverTurno('${v.id}','${l.id}')">Cambiar hora</button>
       <button class="btn sec" onclick="cambiarProfesional('${v.id}','${l.id}')">Cambiar profesional</button>
@@ -4014,6 +4112,7 @@ function hacerCambioServicio(vid,lid,svId){
   const aplicar=(motivo)=>{
     l.servicioId=svId; l.dur=nuevo.dur; l.precio=nuevo.contado;
     l.comisionPct=comisionPctPara(l.profId,l.areaId,svId); l.comisionAuto=true;
+    l.sena=politicaSena(nuevo);
     l.paqueteId = (paqueteActivo(v.clientaId,svId)||{}).id || null;
     if(motivo) l.forzado=motivo;
     logAcc(`${byId(DB.clientas,v.clientaId).nombre}: ${antes?antes.nombre:'?'} → ${nuevo.nombre}${motivo?' — '+motivo:''}`);
@@ -4372,6 +4471,7 @@ function pasoHorario(pid){
 function confirmarTurno(){
   const cl=byId(DB.clientas,NT.clientaId), sv=byId(DB.servicios,NT.servicioId);
   const p=byId(DB.profesionales,NT.profId), ar=byId(DB.areas,NT.areaId);
+  const ps=politicaSena(sv);
   sheet('Confirmar turno', `
     <div class="card cardp" style="margin-bottom:13px">
       <div class="kv"><span class="muted">Clienta</span><b>${esc(cl.nombre)}</b></div>
@@ -4383,6 +4483,9 @@ function confirmarTurno(){
       <div class="kv"><span class="muted">Precio contado</span><b>${money(sv.contado)}</b></div>
       <div class="kv"><span class="muted">Con recargo</span><b>${money(precioLista(sv.contado))}</b></div>
     </div>
+    <div class="${ps.modo==='requerir'?'warnbox':'infobox'}">${ic(ps.modo==='requerir'?'alert':'cash','sm')}
+      <b>${esc(descripcionPoliticaSena(ps,sv.contado))}</b>${ps.modo==='requerir'
+        ?'<br>Podés guardar el turno igual; si no se cobra ahora queda marcado como pendiente.':''}</div>
     ${cl.notas?`<div class="warnbox">${ic('alert','sm')} ${esc(cl.notas)}</div>`:''}
     <button class="btn" onclick="guardarTurno()">Confirmar turno</button>
     <div class="btns">
@@ -4398,6 +4501,7 @@ function guardarTurno(){
     hora:NT.hora, dur:sv.dur, estado:'res', precio:sv.contado, descuento:0,
     comisionPct:comisionPctPara(NT.profId,NT.areaId,NT.servicioId), comisionAuto:true, exenta:false, motivo:'',
     paqueteId: pq?pq.id:null, voucherId:null, consumida:false, liqId:null,
+    sena: politicaSena(sv),
     forzado: NT.motivo||''};
   let v = NT.visitaId ? byId(DB.visitas, NT.visitaId) : null;
   if(v){ v.lineas.push(linea); }
@@ -4419,15 +4523,20 @@ function turnoCargado(vid, lid){
   const v=byId(DB.visitas,vid); if(!v) return;
   const l=byId(v.lineas,lid);
   const cl=byId(DB.clientas,v.clientaId)||{nombre:'', tel:''}, sv=byId(DB.servicios,l.servicioId)||{nombre:''};
+  const sr=resumenSena(v);
   sheet('Turno cargado', `
     <div class="okbox">${esc(cl.nombre)} · ${esc(sv.nombre)} · ${fechaCorta(v.fecha)} a las ${l.hora}</div>
     ${l.forzado?`<div class="warnbox">${ic('alert','sm')} Forzado: ${esc(l.forzado)}</div>`:''}
+    ${sr.hay?`<div class="${sr.modo==='requerir'&&!sr.completa?'warnbox':'infobox'}">
+      ${ic(sr.modo==='requerir'&&!sr.completa?'alert':'cash','sm')} <b>${esc(textoEstadoSena(sr))}</b></div>`:''}
+    ${(sr.hay&&!sr.completa&&puedeCobrar())?`<button class="btn pay" onclick="abrirSena('${vid}')">
+      ${ic('cash','sm')} Registrar seña${sr.pendiente>0?' '+money(sr.pendiente):''}</button>`:''}
     <div class="btns" style="margin-top:0">
       <button class="btn sec" onclick="agregarServicio('${vid}')">${ic('plus','sm')} Otro servicio a esta visita</button>
       <button class="btn sec" onclick="otraVisita('${v.clientaId}')">${ic('plus','sm')} Crear otra visita</button>
     </div>
     <a class="btn wa" style="margin-top:8px" href="${waLink(cl.tel, msgConfirmacion(v,l))}" target="_blank">${ic('wa','sm')} Mandarle el WhatsApp</a>
-    <button class="btn ok" style="margin-top:8px" onclick="closeSheet()">Listo</button>`);
+    <button class="btn ok" style="margin-top:8px" onclick="closeSheet()">${sr.modo==='requerir'&&!sr.completa?'Seguir sin seña':'Listo'}</button>`);
 }
 /* otra visita el mismo día (o en otro día): arranca de cero pero con la misma clienta */
 function otraVisita(cid){
@@ -4958,7 +5067,7 @@ function recepcionHTML(q){
     const ls=v.lineas.filter(l=>l.estado!=='can');
     const otrasV = DB.visitas.filter(x=>x.id!==v.id && x.clientaId===v.clientaId
       && x.fecha===v.fecha && x.sucursalId===v.sucursalId && x.lineas.some(l=>l.estado!=='can')).length;
-    const saldo=saldoVisita(v);
+    const saldo=saldoVisita(v), sr=resumenSena(v);
     const todosLlegaron = ls.every(l=>['lleg','serv','fin'].includes(l.estado));
     return `<div class="card cardp" style="margin-bottom:9px">
       <div style="display:flex;gap:11px;align-items:flex-start">
@@ -4970,13 +5079,15 @@ function recepcionHTML(q){
             <i class="dot d-${l.estado}" style="display:inline-block;margin-left:4px"></i></div>`).join('')}
           ${puedeVerPrecios()?(saldo>0?`<div class="small" style="color:var(--warn);margin-top:3px">Debe ${money(saldo)}</div>`
                    :`<div class="small" style="color:var(--ok);margin-top:3px">Pago al día</div>`):''}
+          ${(puedeVerPrecios()&&sr.hay)?`<div class="small" style="color:${sr.modo==='requerir'&&!sr.completa?'var(--warn)':'var(--muted)'};margin-top:3px">${esc(textoEstadoSena(sr))}</div>`:''}
         </div>
       </div>
       ${c.notas?`<div class="warnbox" style="margin:11px 0 0">${esc(c.notas)}</div>`:''}
       ${puedeVerNotasInternas()&&c.notasInt?`<div class="infobox" style="margin:9px 0 0">${ic('lock','sm')} ${esc(c.notasInt)}</div>`:''}
       <div class="btns">
         ${!todosLlegaron?`<button class="btn lleg" onclick="marcarLlegada('${v.id}')">Llegó</button>`:''}
-        ${saldo>0?`<button class="btn pay" onclick="cobrar('${v.id}')">${ic('cash','sm')} Cobrar ${money(saldo)}</button>`:''}
+        ${(saldo>0&&sr.hay&&!sr.completa&&puedeCobrar())?`<button class="btn pay" onclick="abrirSena('${v.id}')">${ic('cash','sm')} Seña${sr.pendiente>0?' '+money(sr.pendiente):''}</button>`:''}
+        ${(saldo>0&&puedeCobrar())?`<button class="btn pay" onclick="cobrar('${v.id}')">${ic('cash','sm')} Cobrar ${money(saldo)}</button>`:''}
       </div>
     </div>`;
   }).join('');
@@ -4993,7 +5104,7 @@ function marcarLlegada(vid){
 /* ============================================================
    COBRO
    ============================================================ */
-const CO = {vid:null, medio:'efectivo', pagos:[], pendiente:null};
+const CO = {vid:null, medio:'efectivo', pagos:[], pendiente:null, soloSena:false};
 function cobrar(vid){
   /* la puerta de la plata: si el celular es del mostrador, primero
      decime quién sos, y ese nombre es el que queda en el libro */
@@ -5002,8 +5113,16 @@ function cobrar(vid){
       u=>puedeCajaEse(u) && (!u.sucursalId || u.sucursalId===ST.sucursalId));
   if(!puedeCobrar()){ toast('No tenés acceso a la caja'); return; }
   if(!puedeCobrar()){ toast('No tenés acceso a la caja'); return; }
-  CO.vid=vid; CO.medio='efectivo'; CO.pendiente=null;
+  CO.vid=vid; CO.medio='efectivo'; CO.pendiente=null; CO.soloSena=false;
   pintarCobro();
+}
+function abrirSena(vid){
+  if(pinPrendido() && !puedeCobrar() && !sesionViva())
+    return conPin('Para registrar la seña', ()=>abrirSena(vid),
+      u=>puedeCajaEse(u) && (!u.sucursalId || u.sucursalId===ST.sucursalId));
+  if(!puedeCobrar()){ toast('No tenés acceso a la caja'); return; }
+  CO.vid=vid; CO.medio='efectivo'; CO.pendiente=null; CO.soloSena=true;
+  pintarSena();
 }
 function avisoCajaSinAbrir(){
   const a = arqueoDe(hoy(), ST.sucursalId);
@@ -5011,6 +5130,32 @@ function avisoCajaSinAbrir(){
   return `<div class="warnbox">${ic('alert','sm')} <b>La caja de hoy todavía no está abierta.</b>
     El cobro se registra igual, pero el arqueo va a arrancar sin el fondo del cajón.
     <button class="btn sm" style="margin-top:9px" onclick="closeSheet();go('caja');abrirCaja()">Abrirla ahora</button></div>`;
+}
+function pintarSena(){
+  const v=byId(DB.visitas,CO.vid); if(!v) return;
+  const cl=byId(DB.clientas,v.clientaId), sr=resumenSena(v);
+  const M=MEDIOS.find(m=>m.k===CO.medio), saldo=Math.max(0,saldoVisita(v));
+  const contado=(sr.pendiente>0)?Math.min(sr.pendiente,saldo):0;
+  const sugerido=contado>0?aCobrarCon(contado,CO.medio):'';
+  sheet('Registrar seña', `
+    ${avisoCajaSinAbrir()}
+    <div class="card cardp" style="margin-bottom:13px">
+      <div class="kv"><span class="muted">Clienta</span><b>${esc(cl?cl.nombre:'')}</b></div>
+      <div class="kv"><span class="muted">Reserva</span><b>${esc(textoEstadoSena(sr))}</b></div>
+      <div class="kv"><span class="muted">Total de la visita</span><b>${money(totalVisita(v))}</b></div>
+      <div class="kv"><span class="muted">Saldo pendiente</span><b>${money(saldo)}</b></div>
+    </div>
+    <label>¿Cómo entrega la seña?</label>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(88px,1fr));gap:7px;margin-bottom:10px">
+      ${MEDIOS.map(m=>`<button class="pill ${m.k===CO.medio?'on':''}"
+        onclick="CO.medio='${m.k}';pintarSena()">${m.n}</button>`).join('')}
+    </div>
+    ${(M&&M.rec&&contado>0)?`<div class="warnbox">Para aplicar ${money(contado)} a la reserva,
+      con ${esc(M.n.toLowerCase())} se cobran ${money(sugerido)} por el recargo.</div>`:''}
+    <div class="f"><label>Importe que entrega ahora</label>
+      <input type="number" id="imp" value="${sugerido}" placeholder="Escribí el importe" inputmode="numeric"></div>
+    <button class="btn pay" onclick="registrarPago('sena')">${ic('cash','sm')} Confirmar seña</button>
+    <button class="btn sec" style="margin-top:8px" onclick="closeSheet()">Ahora no</button>`);
 }
 function pintarCobro(){
   const v=byId(DB.visitas,CO.vid), cl=byId(DB.clientas,v.clientaId);
@@ -5059,7 +5204,6 @@ function pintarCobro(){
 
     <div class="btns">
       <button class="btn pay" onclick="registrarPago('total')">${ic('cash','sm')} Cobrar</button>
-      <button class="btn sec" onclick="registrarPago('sena')">Es una seña</button>
     </div>
     <div class="btns">
       ${puedeDescuentos()?`<button class="btn sec" onclick="ponerDescuento('${v.id}')">Hacer un descuento</button>`:''}
@@ -5083,6 +5227,7 @@ function registrarPago(tipo){
   const M=MEDIOS.find(m=>m.k===CO.medio);
   const imp = +document.getElementById('imp').value;
   if(!imp || imp<=0){ toast('Poné un importe'); return; }
+  const intentoId=uid('pp');
   const saldo = saldoVisita(v);
   const sug = aCobrarCon(Math.max(0,saldo), CO.medio);
   /* cuánto del precio de contado cubre esta plata */
@@ -5093,15 +5238,15 @@ function registrarPago(tipo){
     return confirmarConMotivo('Está cobrando de más',
       [`Falta ${money(Math.max(0,saldo))} de contado y este pago cubre ${money(contado)}.`,
        `Quedarían ${money(contado-saldo)} a favor de la clienta.`],
-      'Cobrar igual', m=>hacerPago(tipo, imp, contado, m));
+      'Cobrar igual', m=>hacerPago(tipo, imp, contado, m, intentoId));
   }
-  confirmarPago(tipo, imp, contado);
+  confirmarPago(tipo, imp, contado, intentoId);
 }
-function confirmarPago(tipo, imp, contado){
+function confirmarPago(tipo, imp, contado, intentoId){
   if(!puedeCobrar()){ toast('No tenés acceso a la caja'); return; }
   const v=byId(DB.visitas,CO.vid), cl=byId(DB.clientas,v.clientaId);
   const M=MEDIOS.find(m=>m.k===CO.medio);
-  CO.pendiente={tipo,imp,contado,motivo:''};
+  CO.pendiente={tipo,imp,contado,motivo:'',intentoId:intentoId||uid('pp')};
   sheet(tipo==='sena'?'Confirmar seña':'Confirmar cobro', `
     <div class="card cardp" style="margin-bottom:13px">
       <div class="kv"><span class="muted">Clienta</span><b>${esc(cl?cl.nombre:'')}</b></div>
@@ -5110,19 +5255,21 @@ function confirmarPago(tipo, imp, contado){
       <div class="tot"><span>Importe</span><span>${money(imp)}</span></div>
     </div>
     <button class="btn pay" onclick="hacerPagoPendiente()">Sí, registrar ${tipo==='sena'?'la seña':'el cobro'}</button>
-    <button class="btn sec" style="margin-top:8px" onclick="pintarCobro()">Volver</button>`);
+    <button class="btn sec" style="margin-top:8px" onclick="${CO.soloSena?'pintarSena()':'pintarCobro()'}">Volver</button>`);
 }
 function hacerPagoPendiente(){
   const p=CO.pendiente; if(!p) return;
   CO.pendiente=null;
-  hacerPago(p.tipo,p.imp,p.contado,p.motivo);
+  hacerPago(p.tipo,p.imp,p.contado,p.motivo,p.intentoId);
 }
-function hacerPago(tipo, imp, contado, motivo){
+function hacerPago(tipo, imp, contado, motivo, intentoId){
   if(!puedeCobrar()){ toast('No tenés acceso a la caja'); return; }
   const v=byId(DB.visitas,CO.vid);
+  if(intentoId && v.pagos.some(p=>p.intentoId===intentoId)) return;
   const cl=byId(DB.clientas,v.clientaId);
   const p={id:uid('pa'), importe:imp, contado, medio:CO.medio, tipo,
-    fecha:hoy(), hora:horaAhora(), usuario:usuario().nombre, motivo:motivo||'', anulado:null};
+    fecha:hoy(), hora:horaAhora(), usuario:usuario().nombre, motivo:motivo||'',
+    intentoId:intentoId||uid('pp'), anulado:null};
   v.pagos.push(p);
   /* al libro de caja, con la fecha de HOY: la plata entró hoy aunque el turno sea de otro día */
   const m = mov(tipo==='sena'?'sena':'cobro', {importe:imp, medio:CO.medio, visitaId:v.id,
@@ -5131,6 +5278,7 @@ function hacerPago(tipo, imp, contado, motivo){
   p.movId = m.id;
   logAcc(`Cobro ${money(imp)} (${CO.medio}) a ${cl?cl.nombre:''}${motivo?' — '+motivo:''}`);
   save();
+  if(CO.soloSena){ closeSheet(); render(); toast('Seña registrada'); return; }
   if(saldoVisita(v)<=0){ closeSheet(); render(); toast('Cobrado. Cuenta saldada.'); }
   else { pintarCobro(); toast('Pago registrado'); }
 }
@@ -5304,6 +5452,7 @@ function vFicha(){
         <div class="g">
           <b>${fechaCorta(v.fecha)}</b>
           ${v.lineas.map(l=>`<span>${esc(byId(DB.servicios,l.servicioId).nombre)} · ${esc(byId(DB.profesionales,l.profId).nombre.split(' ')[0])} <i class="dot d-${l.estado}" style="display:inline-block"></i></span>`).join('')}
+          ${puedeVerPrecios()?`<span class="tiny">${esc(textoEstadoSena(resumenSena(v)))} · saldo ${money(Math.max(0,saldoVisita(v)))}</span>`:''}
         </div>
         <div class="r">${puedeVerPrecios()?money(cobradoVisita(v)):''}</div>
       </div>`).join(''):`<div class="empty">Todavía no vino.</div>`}</div>
@@ -8480,6 +8629,8 @@ function vConfig(){
         <span>${DB.sucursales.length} cargadas</span></div>${ic('chev','sm')}</button>
       <button class="lr" onclick="editarRecargo()"><div class="g"><b>Recargo y redondeo</b>
         <span>${DB.cfg.recargo}% · redondea a ${money(DB.cfg.redondeo)} para arriba</span></div>${ic('chev','sm')}</button>
+      <button class="lr" onclick="editarSenaGeneral()"><div class="g"><b>Reservas y señas</b>
+        <span>${esc(descripcionPoliticaSena(DB.cfg.sena))} · se puede cambiar por servicio</span></div>${ic('chev','sm')}</button>
       <button class="lr" onclick="aumentoMasivo()"><div class="g"><b>Aumento de precios</b>
         <span>Subir un porcentaje a un área o a todo</span></div>${ic('chev','sm')}</button>
       <button class="lr" onclick="go('usuarios')"><div class="g"><b>Usuarios</b>
@@ -8520,6 +8671,31 @@ function vConfig(){
     <button class="btn sec" onclick="if(confirm('Se borran todos los cambios que hiciste y vuelven los datos de ejemplo. ¿Seguro?'))reset()">
       Restaurar datos de ejemplo</button>
   </div>`;
+}
+function editarSenaGeneral(){
+  if(!puedeConfig()){ toast('No tenés acceso a la configuración'); return; }
+  const p=normalizarSena(DB.cfg.sena);
+  sheet('Reservas y señas', `
+    <div class="infobox">Esta es la regla general. Cada servicio puede heredarla o tener una
+      distinta. Incluso si dice obligatoria, recepción puede guardar el turno y queda marcada
+      como pendiente: la operación nunca se bloquea. El cambio vale para reservas nuevas.</div>
+    <div class="f"><label>Al reservar</label>
+      <select id="sgm">${opcionesModoSena(p.modo,false)}</select></div>
+    <div class="f"><label>Cómo se calcula</label>
+      <select id="sgt">${opcionesTipoSena(p.tipo)}</select></div>
+    <div class="f"><label>Importe o porcentaje</label>
+      <input type="number" id="sgv" value="${p.valor||''}" min="0" inputmode="numeric"></div>
+    <div class="small muted" style="margin:-8px 0 13px">Con importe libre, recepción escribe lo
+      que recibe. Si elegís «No pedir», el cálculo no se usa.</div>
+    <button class="btn" onclick="guardarSenaGeneral()">Guardar regla general</button>`);
+}
+function guardarSenaGeneral(){
+  if(!puedeConfig()){ toast('No tenés acceso a la configuración'); return; }
+  const r=leerSenaFormulario('sg',false); if(!r.ok) return;
+  const antes=descripcionPoliticaSena(DB.cfg.sena);
+  DB.cfg.sena=r.regla;
+  logAcc(`Regla general de señas: ${antes} → ${descripcionPoliticaSena(r.regla)}`);
+  save(); closeSheet(); render(); toast('Regla de señas guardada');
 }
 function datosDelNegocio(){
   if(!puedeConfig()){ toast('No tenés acceso a la configuración'); return; }
@@ -8614,9 +8790,10 @@ function hacerCero(){
   DB = {
     cfg: { negocio: DB.cfg.negocio, recargo: DB.cfg.recargo, redondeo: DB.cfg.redondeo,
       diasSinVenir: DB.cfg.diasSinVenir, permisos: JSON.parse(JSON.stringify(PERM_DEF)),
+      sena: normalizarSena(DB.cfg.sena),
       recordatorioVispera: DB.cfg.recordatorioVispera||RECORDATORIO_DEF,
       recordatorioMismoDia: DB.cfg.recordatorioMismoDia||RECORDATORIO_DEF,
-      v: 8, fondoCaja: 0, pedirPin: !!DB.cfg.pedirPin, linkApp: DB.cfg.linkApp,
+      v: 9, fondoCaja: 0, pedirPin: !!DB.cfg.pedirPin, linkApp: DB.cfg.linkApp,
       presentado: true, ultimoUsuario: mio.id },
     sucursales:[], areas:[], servicios:[], profesionales:[], asign:[], horarios:[],
     bloqueos:[], clientas:[], visitas:[], espera:[], caja:[], gastos:[],
@@ -8808,6 +8985,8 @@ function editarServicio(id){
   if(!puedeConfig()){ toast('No tenés acceso a la configuración'); return; }
   const s = id?byId(DB.servicios,id):null;
   const g = (k,d) => s?s[k]:d;
+  const sp=s&&s.sena?normalizarSena(s.sena):normalizarSena(DB.cfg.sena);
+  const sm=s&&s.sena?sp.modo:'hereda';
   sheet(s?'Editar servicio':'Servicio nuevo', `
     <div class="f"><label>Nombre</label><input id="sn" value="${s?esc(s.nombre):''}" placeholder="Kapping"></div>
     <div class="f"><label>Precio de contado</label><input type="number" id="sc" value="${g('contado','')}" inputmode="numeric"></div>
@@ -8825,6 +9004,16 @@ function editarServicio(id){
     </div>
     <div class="f"><label>¿Cuántas clientas puede atender a la vez con este servicio?</label>
       <input type="number" id="ss" value="${g('simult',1)}" min="1" max="5" inputmode="numeric"></div>
+    <div class="h3" style="margin-top:6px">Reserva y seña</div>
+    <div class="f"><label>Regla para este servicio</label>
+      <select id="ssm">${opcionesModoSena(sm,true)}</select></div>
+    <div class="f"><label>Cómo se calcula</label>
+      <select id="sst">${opcionesTipoSena(sp.tipo)}</select></div>
+    <div class="f"><label>Importe o porcentaje</label>
+      <input type="number" id="ssv" value="${sp.valor||''}" min="0" inputmode="numeric"></div>
+    <div class="small muted" style="margin:-8px 0 13px">Regla general actual:
+      <b>${esc(descripcionPoliticaSena(DB.cfg.sena))}</b>. Si elegís «Usar la regla general»,
+      los dos campos de abajo no se tienen en cuenta.</div>
     <div class="chk"><input type="checkbox" id="sm" ${s&&s.precioManual?'checked':''}>
       <div class="g"><b>Precio fijado a mano</b>
       <span class="small muted">Los aumentos generales no le tocan el precio a este servicio</span></div></div>
@@ -8856,9 +9045,10 @@ function guardarServicio(id){
   const v=k=>+document.getElementById(k).value||0;
   const dur = v('s1')+v('s2')+v('s3');
   if(dur<=0){ toast('El servicio tiene que durar al menos unos minutos'); return; }
-  guardarServicioYa(id, '');
+  const sr=leerSenaFormulario('ss',true); if(!sr.ok) return;
+  guardarServicioYa(id, '', sr.regla);
 }
-function guardarServicioYa(id, motivo){
+function guardarServicioYa(id, motivo, senaRegla){
   if(!puedeConfig()){ toast('No tenés acceso a la configuración'); return; }
   const n=document.getElementById('sn').value.trim();
   const v=k=>+document.getElementById(k).value||0;
@@ -8870,10 +9060,11 @@ function guardarServicioYa(id, motivo){
   if(areaEl) datos.areaId = areaEl.value;
   if(motivo) datos.motivoRaro = motivo;
   if(id){
-    const s=byId(DB.servicios,id); Object.assign(s, datos); s.precioManual=man;
+    const s=byId(DB.servicios,id); Object.assign(s, datos); s.precioManual=man; s.sena=senaRegla;
     const sa=document.getElementById('sa'); if(sa) s.activo=sa.checked;
   }else{
-    const s = {id:uid('sv'), areaId:ST.areaId, comision:0, ...datos, precioManual:man, activo:true};
+    const s = {id:uid('sv'), areaId:ST.areaId, comision:0, sena:senaRegla,
+      ...datos, precioManual:man, activo:true};
     DB.servicios.push(s);
     /* todas las profesionales del área ELEGIDA quedan habilitadas */
     DB.asign.filter(a=>a.areaId===s.areaId).forEach(a=>a.servicios.push(s.id));
@@ -9188,6 +9379,7 @@ function duplicarServicio(id){
   const s = byId(DB.servicios, id);
   const n = {}; Object.assign(n, s);
   n.id = uid('sv'); n.nombre = s.nombre+' (copia)'; n.activo = true;
+  n.sena = s.sena ? {...s.sena} : null;
   DB.servicios.push(n);
   DB.asign.filter(a=>a.areaId===n.areaId).forEach(a=>a.servicios.push(n.id));
   logAcc(`Servicio duplicado: ${s.nombre}`);
@@ -9508,7 +9700,7 @@ render();
    Julián actualizaba y no veía los cambios. Cada vez que se abre,
    la app se fija sola si hay una más nueva y se recarga.
    ============================================================ */
-const VERSION_ISIS = 18;
+const VERSION_ISIS = 19;
 async function mirarSiHayNueva(){
   if(location.protocol === 'file:') return;
   try{
