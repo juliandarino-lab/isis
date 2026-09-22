@@ -1260,25 +1260,8 @@ function migrar(){
     (DB.areas||[]).forEach(a=>{ if(a.porTurno===undefined) a.porTurno = AREAS_CON_TURNO.includes(a.nombre); });
     DB.cfg.v = 6;
   }
-  /* EL EJEMPLO VIEJO.
-     Los datos de ejemplo se arman UNA sola vez, la primera vez que se abre
-     la app. El celular que ya la tenía instalada se quedó con el ejemplo
-     viejo: tres locales inventados (Centro, Norte, Shopping), diez
-     profesionales y la fila vacía. Por eso Julián no veía los nombres de
-     verdad. Si lo que hay guardado es EXACTAMENTE ese ejemplo y nadie tocó
-     nada, se rehace de cero con el nuevo. Si cargaron algo propio, no se
-     toca ni un dato. */
-  if((!DB.cfg.v || DB.cfg.v < 7) && esElEjemploViejo()){
-    const antes = DB.cfg.presentado;
-    const D = seed();
-    D.cfg.presentado = antes;
-    D.cfg.pedirPin = false;
-    D.cfg.v = 7;
-    DB = D;
-    ST.usuarioId = (DB.usuarios[0]||{}).id;
-    ST.sucursalId = (DB.sucursales[0]||{}).id;
-    ST.areaId = null;
-  }
+  /* Una actualización jamás reemplaza automáticamente una base guardada.
+     Los ejemplos se limpian sólo desde Configuración y con confirmación. */
   if(!DB.cfg.v || DB.cfg.v < 7){
     delete DB.cfg.pedirClave;
     DB.cfg.v = 7;
@@ -1309,14 +1292,6 @@ function migrar(){
   /* las fotos de fichaje viejas se borran solas para no llenar la memoria */
   const lim = addDays(hoy(), -60);
   DB.fichadas.forEach(f=>{ if(f.fecha<lim){ delete f.fotoEntrada; delete f.fotoSalida; } });
-}
-/* ¿lo guardado es el ejemplo viejo tal cual salió, sin nada propio? */
-function esElEjemploViejo(){
-  const nom = (DB.sucursales||[]).map(x=>x.nombre).sort().join('|');
-  if(nom !== 'Centro|Norte|Shopping') return false;
-  if((DB.profesionales||[]).length !== 10) return false;
-  if((DB.usuarios||[]).length > 6) return false;
-  return true;
 }
 let SIN_ESPACIO = false;
 function save(){
@@ -1481,7 +1456,7 @@ const puedeHorarios    = () => ['todo','suc','area'].includes(perm('equipo'));
    porque recepción es la que entrega la plata y tiene que saber cuánto y a quién. */
 const puedeVerComisiones=() => ['todo','suc','area'].includes(perm('equipo'));
 /* PAGAR y cerrar liquidaciones: administración y recepción. La supervisora mira, no paga. */
-const puedeLiquidar    = () => usuario().rol!=='supervisora' && ['todo','suc'].includes(perm('equipo'));
+const puedeLiquidar    = () => puedeCobrar() && usuario().rol!=='supervisora' && ['todo','suc'].includes(perm('equipo'));
 /* Ajustar porcentajes no da acceso a liquidar ni pagar: eso pertenece a Caja. */
 const puedeAjustarComision = () => perm('equipo')==='todo' || usuario().rol==='supervisora';
 const puedeVerReportes = () => perm('reportes')!=='no';
@@ -3442,15 +3417,18 @@ function vHome(){
 
     ${elDia()}
 
+    <div class="h3">Mostrador</div>
     ${puedeEditarAgenda()?`<button class="btn" style="margin-bottom:9px" onclick="nuevoTurno()">${ic('plus')} Nuevo turno</button>`:''}
     <div class="q2">
-      ${puedeCobrar()?`<button class="qb" onclick="recepcionRapida()"><b>Recepción rápida</b><span>Buscar a una clienta y cobrarle</span></button>`:''}
-      ${puedeRecordatorios()?`<button class="qb" onclick="abrirRecordatorios()"><b>Recordatorios</b><span>${esc(resumenRecordatoriosInicio())}</span></button>`:''}
+      ${(puedeEditarAgenda()||puedeCobrar())?`<button class="qb" onclick="recepcionRapida()"><b>Buscar una clienta</b><span>${puedeCobrar()?'Llegada, seña o cobro':'Marcar su llegada'}</span></button>`:''}
       ${puedeEditarAgenda()?`<button class="qb" onclick="llegoAlguien()"><b>Llegó alguien sin turno</b><span>Anotarla en la fila</span></button>`:''}
+      ${puedeRecordatorios()?`<button class="qb" onclick="abrirRecordatorios()"><b>Recordatorios</b><span>${esc(resumenRecordatoriosInicio())}</span></button>`:''}
+    </div>
+    ${(puedeEditarAgenda()||puedeVerAgenda())?`<div class="h3">Buscar en la agenda</div><div class="q2">
       ${puedeEditarAgenda()?`<button class="qb" onclick="quienEstaLibre()"><b>¿Quién está libre ahora?</b><span>Ver huecos al toque</span></button>`:''}
       ${puedeEditarAgenda()?`<button class="qb" onclick="cuandoHayLugar()"><b>¿Cuándo hay lugar?</b><span>El primer turno de cada servicio</span></button>`:''}
       ${puedeVerAgenda()?`<button class="qb" onclick="buscarAgenda()"><b>Buscar un turno</b><span>Si no sabés qué día era</span></button>`:''}
-    </div>
+    </div>`:''}
 
     <div class="kpis">
       <button class="kpi res" onclick="verEstado('res')"><b>${c('res')}</b><span>Reservados</span></button>
@@ -5036,7 +5014,7 @@ function irAlTurno(vid, lid){
    RECEPCIÓN RÁPIDA
    ============================================================ */
 function recepcionRapida(){
-  sheet('Recepción rápida', `
+  sheet('Buscar una clienta', `
     <div class="f"><input id="rq" placeholder="Escribí el nombre de la clienta"
       oninput="pintarRecepcion(this.value)" autocomplete="off"></div>
     <div id="rres">${recepcionHTML('')}</div>`, {focus:'rq'});
@@ -6886,20 +6864,54 @@ function hacerDeshacerLiquidacion(lid){
   logAcc(`Liquidación deshecha: ${(byId(DB.profesionales,l.profId)||{}).nombre||''}`);
   save(); closeSheet(); render(); toast('Liquidación deshecha');
 }
-function marcarPagada(lid){
-  if(!puedeLiquidar()){ toast('Las liquidaciones las maneja administración'); return; }
+let LQMEDIO='efectivo', LQID=null;
+function marcarPagada(lid, conservarMedio){
+  if(!puedeLiquidar()){ toast('Para pagar una liquidación necesitás acceso a la caja'); return; }
   const l = byId(DB.liquidaciones,lid);
+  if(!l){ toast('No se encontró esa liquidación'); return; }
+  if(l.pagada){ toast('Esa liquidación ya está pagada'); return; }
   const p = byId(DB.profesionales,l.profId);
-  l.pagada=true; l.pagadaF=hoy();
-  /* la plata sale de la caja: si no quedó cargada al liquidar, se carga ahora */
-  if(!l.gastoId && puedeCobrar()){
-    const g = {id:uid('ga'), sucursalId:ST.sucursalId, fecha:hoy(),
-      concepto:'Pago a '+(p?p.nombre:''), importe:l.total, tipo:'comision'};
-    DB.gastos.push(g); l.gastoId=g.id;
+  LQID=lid; if(!conservarMedio) LQMEDIO='efectivo';
+  sheet('Pagar liquidación', `
+    <div class="card cardp" style="margin-bottom:13px">
+      <div class="kv"><span class="muted">Profesional</span><b>${esc(p?p.nombre:'—')}</b></div>
+      <div class="kv"><span class="muted">Período</span><b>${fechaCorta(l.desde)} al ${fechaCorta(l.hasta)}</b></div>
+      <div class="tot"><span>Total a pagar</span><span>${money(l.total)}</span></div>
+    </div>
+    ${elegirMedioHTML(LQMEDIO,'medioLiquidacion')}
+    <div class="infobox">Recién al confirmar se marca como pagada y se registra la salida en la caja.</div>
+    <button class="btn pay" onclick="pagarLiquidacion('${lid}')">Confirmar pago de ${money(l.total)}</button>`);
+}
+function medioLiquidacion(k){
+  LQMEDIO=k;
+  if(LQID) marcarPagada(LQID,true);
+}
+function pagarLiquidacion(lid, medioElegido){
+  if(!puedeLiquidar()){ toast('Para pagar una liquidación necesitás acceso a la caja'); return; }
+  const l = byId(DB.liquidaciones,lid);
+  if(!l){ toast('No se encontró esa liquidación'); return; }
+  if(l.pagada){ toast('Esa liquidación ya está pagada'); return; }
+  const p = byId(DB.profesionales,l.profId), total=+l.total||0;
+  const medio=medioElegido||LQMEDIO;
+  if(total<0){ toast('El total de la liquidación no puede ser negativo'); return; }
+  let g=null, m=null;
+  if(total>0){
+    g = l.gastoId ? byId(DB.gastos,l.gastoId) : null;
+    if(!g){
+      g={id:uid('ga'), sucursalId:ST.sucursalId, fecha:hoy(), hora:horaAhora(),
+        concepto:'Pago a '+(p?p.nombre:''), importe:total, tipo:'comision',
+        medio, usuario:usuario().nombre};
+      DB.gastos.push(g); l.gastoId=g.id;
+    }
+    m = g.movId ? byId(DB.mov,g.movId) : DB.mov.find(x=>!x.anulado && (x.liqId===l.id || x.gastoId===g.id));
+    if(!m) m=mov('pagoprof', {importe:total, medio, gastoId:g.id, liqId:l.id,
+      profId:l.profId, concepto:'Pago a '+(p?p.nombre:'')});
+    g.movId=m.id; l.movId=m.id;
   }
-  logAcc(`Pagada la liquidación de ${p?p.nombre:''}: ${money(l.total)}`);
-  save(); render();
-  toast(l.gastoId?'Pagada y cargada en la caja':'Marcada como pagada');
+  l.pagada=true; l.pagadaF=hoy(); l.medio=medio;
+  logAcc(`Pagada la liquidación de ${p?p.nombre:''}: ${money(total)} (${medio})`);
+  save(); closeSheet(); render();
+  toast(total>0?'Pagada y registrada en la caja':'Liquidación cerrada');
 }
 
 /* ============================================================
@@ -7475,7 +7487,9 @@ function previoCierre(){
           Tendría que haber ${money(a.esperado)} y contaste ${money(contado)}. Te va a pedir el motivo.</div>`);
   document.getElementById('retc').innerHTML = mc.value===''
     ? ''
-    : `Se retiran <b>${money(Math.max(0,contado-fondo))}</b> y quedan ${money(fondo)} en el cajón.`;
+    : (fondo<0 || fondo>contado
+      ? `<div class="warnbox">El fondo tiene que estar entre $0 y lo que contaste.</div>`
+      : `Se retiran <b>${money(contado-fondo)}</b> y quedan ${money(fondo)} en el cajón.`);
 }
 function hacerCerrarCaja(){
   if(!puedeCobrar()){ toast('No tenés acceso a la caja'); return; }
@@ -7485,6 +7499,8 @@ function hacerCerrarCaja(){
   if(!mc || mc.value===''){ toast('Contá la plata y poné cuánto hay'); return; }
   const contado = +mc.value||0;
   const fondo = +(document.getElementById('mf').value)||0;
+  if(contado<0){ toast('Lo contado no puede ser negativo'); return; }
+  if(fondo<0 || fondo>contado){ toast('El fondo no puede ser mayor que lo contado'); return; }
   const dif = contado - a.esperado;
   if(dif!==0) return confirmarConMotivo(
     (dif>0?'Sobran ':'Faltan ')+money(Math.abs(dif)),
@@ -7494,6 +7510,8 @@ function hacerCerrarCaja(){
   hacerCerrarCajaFin(contado, fondo, '');
 }
 function hacerCerrarCajaFin(contado, fondo, motivo){
+  if(!puedeCobrar()){ toast('No tenés acceso a la caja'); return; }
+  if(contado<0 || fondo<0 || fondo>contado){ toast('Revisá lo contado y el fondo que queda'); return; }
   const a = arqueoDe(hoy(), ST.sucursalId);
   const c = DB.caja.find(x=>x.sucursalId===ST.sucursalId && x.fecha===hoy());
   const retiro = Math.max(0, contado - fondo);
@@ -8616,7 +8634,13 @@ function vConfig(){
   const sucA = byId(DB.sucursales, ST.sucursalId);
   return `<div class="pad">
     ${pasosConfig()}
+
+    <div class="h3">Negocio y agenda</div>
     <div class="listcard">
+      <button class="lr" onclick="datosDelNegocio()"><div class="g"><b>Datos del negocio</b>
+        <span>${esc(DB.cfg.negocio)} · avisa a los ${DB.cfg.diasSinVenir} días sin venir</span></div>${ic('chev','sm')}</button>
+      <button class="lr" onclick="editarSucursales()"><div class="g"><b>Sucursales</b>
+        <span>${DB.sucursales.length} cargadas</span></div>${ic('chev','sm')}</button>
       ${sucA?`<button class="lr" onclick="go('areas')"><div class="g"><b>Áreas</b>
         <span>${DB.areas.filter(a=>a.sucursalId===ST.sucursalId).length} en ${esc(sucA.nombre)}</span></div>${ic('chev','sm')}</button>
       <button class="lr" onclick="go('servicios')"><div class="g"><b>Servicios y precios</b>
@@ -8625,52 +8649,57 @@ function vConfig(){
         <span>${DB.profesionales.filter(p=>p.activa).length} cargadas · horarios de la semana</span></div>${ic('chev','sm')}</button>
       ${hayOtroLocalCargado()?`<button class="lr" onclick="copiarLocal()"><div class="g"><b>Copiar de otro local</b>
         <span>Traer las áreas y los servicios ya cargados en otra sucursal</span></div>${ic('chev','sm')}</button>`:''}`:''}
-      <button class="lr" onclick="editarSucursales()"><div class="g"><b>Sucursales</b>
-        <span>${DB.sucursales.length} cargadas</span></div>${ic('chev','sm')}</button>
+    </div>
+
+    <div class="h3">Precios, reservas y mensajes</div>
+    <div class="listcard">
       <button class="lr" onclick="editarRecargo()"><div class="g"><b>Recargo y redondeo</b>
         <span>${DB.cfg.recargo}% · redondea a ${money(DB.cfg.redondeo)} para arriba</span></div>${ic('chev','sm')}</button>
       <button class="lr" onclick="editarSenaGeneral()"><div class="g"><b>Reservas y señas</b>
         <span>${esc(descripcionPoliticaSena(DB.cfg.sena))} · se puede cambiar por servicio</span></div>${ic('chev','sm')}</button>
       <button class="lr" onclick="aumentoMasivo()"><div class="g"><b>Aumento de precios</b>
         <span>Subir un porcentaje a un área o a todo</span></div>${ic('chev','sm')}</button>
+      <button class="lr" onclick="editarMensajesRecordatorios()"><div class="g"><b>Mensajes de recordatorios</b>
+        <span>Texto para el día anterior y para el mismo día</span></div>${ic('chev','sm')}</button>
+    </div>
+
+    <div class="h3">Personas y accesos</div>
+    <div class="listcard">
       <button class="lr" onclick="go('usuarios')"><div class="g"><b>Usuarios</b>
         <span>${DB.usuarios.filter(u=>u.activo!==false).length} personas con acceso</span></div>${ic('chev','sm')}</button>
       <button class="lr" onclick="verPermisos()"><div class="g"><b>Permisos</b>
         <span>Qué puede hacer cada rol</span></div>${ic('chev','sm')}</button>
       <button class="lr" onclick="mandarLink()"><div class="g"><b>Mandar el link del sistema</b>
         <span>Para que entren desde su celular</span></div>${ic('chev','sm')}</button>
-      <button class="lr" onclick="editarMensajesRecordatorios()"><div class="g"><b>Mensajes de recordatorios</b>
-        <span>Texto para el día anterior y para el mismo día</span></div>${ic('chev','sm')}</button>
-      <button class="lr" onclick="datosDelNegocio()"><div class="g"><b>Datos del negocio</b>
-        <span>${esc(DB.cfg.negocio)} · avisa a los ${DB.cfg.diasSinVenir} días sin venir</span></div>${ic('chev','sm')}</button>
     </div>
 
-    <div class="h3">Arrancar con datos reales</div>
-    <div class="card cardp">
-      <div class="small muted" style="margin-bottom:11px">Cuando terminen de probar, esto borra el
-      movimiento de ejemplo (turnos, caja, fichajes) y deja la estructura que ya cargaron.</div>
-      <button class="btn sec" onclick="empezarEnSerio()">${ic('list','sm')} Limpiar los datos de prueba</button>
-      <div class="small muted" style="margin:14px 0 11px">Si querés borrar <b>todo</b> —también las
-      sucursales, los servicios y las profesionales— y arrancar con la app vacía:</div>
-      <button class="btn dan" onclick="empezarDeCero()">${ic('trash','sm')} Empezar de cero</button>
+    <div class="h3">Respaldo y puesta en marcha</div>
+    <div class="listcard">
+      <button class="lr" onclick="configRespaldo()"><div class="g"><b>Copias, limpieza y reinicio</b>
+        <span>${(pesoBase()/1024/1024).toFixed(2)} MB ocupados · ${DB.visitas.length} turnos guardados</span></div>${ic('chev','sm')}</button>
     </div>
-    <div class="h3">Copia de seguridad</div>
+  </div>`;
+}
+function configRespaldo(){
+  sheet('Copias, limpieza y reinicio', `
+    <div class="h3" style="margin-top:0">Copia de seguridad</div>
     <div class="card cardp">
       <div class="kv"><span class="muted">Ocupado en este dispositivo</span>
         <b style="color:${pesoBase()>4200000?'var(--stop)':(pesoBase()>3000000?'var(--warn)':'var(--ok)')}">
         ${(pesoBase()/1024/1024).toFixed(2)} MB de 5 MB</b></div>
       <div class="kv"><span class="muted">Turnos guardados</span><b>${DB.visitas.length}</b></div>
-      <div class="btns">
-        <button class="btn sec" onclick="exportarBase()">Bajar copia</button>
-        <button class="btn sec" onclick="document.getElementById('impfile').click()">Restaurar copia</button>
-      </div>
+      <div class="btns"><button class="btn sec" onclick="exportarBase()">Bajar copia</button>
+        <button class="btn sec" onclick="document.getElementById('impfile').click()">Restaurar copia</button></div>
       <input type="file" id="impfile" accept=".json" style="display:none" onchange="importarBase(this)">
       <button class="btn sec" style="margin-top:8px" onclick="liberarEspacio()">Archivar turnos viejos</button>
     </div>
-    <div class="h3">Prototipo</div>
-    <button class="btn sec" onclick="if(confirm('Se borran todos los cambios que hiciste y vuelven los datos de ejemplo. ¿Seguro?'))reset()">
-      Restaurar datos de ejemplo</button>
-  </div>`;
+    <div class="h3">Preparar los datos reales</div>
+    <div class="card cardp"><div class="small muted" style="margin-bottom:11px">Borra turnos, caja y fichajes de prueba, pero conserva locales, servicios, profesionales y configuración.</div>
+      <button class="btn sec" onclick="empezarEnSerio()">${ic('list','sm')} Limpiar los datos de prueba</button></div>
+    <div class="h3">Reiniciar</div>
+    <div class="warnbox">Estas opciones borran información. El sistema vuelve a pedir confirmación antes de hacerlo.</div>
+    <button class="btn dan" onclick="empezarDeCero()">${ic('trash','sm')} Empezar de cero</button>
+    <button class="btn sec" style="margin-top:8px" onclick="if(confirm('Se borran todos los cambios que hiciste y vuelven los datos de ejemplo. ¿Seguro?'))reset()">Restaurar datos de ejemplo</button>`);
 }
 function editarSenaGeneral(){
   if(!puedeConfig()){ toast('No tenés acceso a la configuración'); return; }
@@ -9401,10 +9430,11 @@ function verPermisos(){
         ${MODULOS.map(m=>`
           <div class="gt" style="text-align:left;padding:9px;font-size:12.5px;color:var(--ink);font-weight:600">${m.n}</div>
           ${Object.keys(ROLES).map(r=>{
-            const v = P[r][m.k];
+            const bloqueado = r==='supervisora' && m.k==='caja';
+            const v = bloqueado ? 'no' : P[r][m.k];
             const col = (v==='no')?'var(--faint)':(v==='todo'||v==='si')?'var(--ok)':'var(--warn)';
             return `<div class="gc" style="padding:9px 4px;text-align:center;font-size:11px;color:${col};
-              font-weight:600;cursor:pointer" onclick="cambiarPermiso('${r}','${m.k}')">${etiquetaPerm(m.k,v)}</div>`;
+              font-weight:600;cursor:${bloqueado?'default':'pointer'}" ${bloqueado?'':`onclick="cambiarPermiso('${r}','${m.k}')"`}>${bloqueado?'Nunca':etiquetaPerm(m.k,v)}</div>`;
           }).join('')}
         `).join('')}
       </div>
@@ -9412,6 +9442,7 @@ function verPermisos(){
     <button class="btn sec" style="margin-top:13px" onclick="restaurarPermisos()">Volver a los permisos por defecto</button>`);
 }
 function cambiarPermiso(rol, mk){
+  if(rol==='supervisora' && mk==='caja'){ toast('La supervisora nunca entra a Caja'); return; }
   const m = MODULOS.find(x=>x.k===mk);
   sheet(ROLES[rol]+' · '+m.n, `
     <div class="listcard">${m.vals.map(v=>`
@@ -9434,6 +9465,10 @@ function descPerm(mk,v){
 }
 function setPermiso(rol, mk, v){
   if(!puedeConfig()){ toast('No tenés acceso a la configuración'); return; }
+  if(rol==='supervisora' && mk==='caja'){
+    DB.cfg.permisos.supervisora.caja='no';
+    toast('La supervisora nunca entra a Caja'); return;
+  }
   DB.cfg.permisos[rol][mk]=v;
   logAcc(`Permiso ${ROLES[rol]} · ${mk} → ${v}`);
   save(); closeSheet(); render(); setTimeout(verPermisos,120);
@@ -9700,7 +9735,7 @@ render();
    Julián actualizaba y no veía los cambios. Cada vez que se abre,
    la app se fija sola si hay una más nueva y se recarga.
    ============================================================ */
-const VERSION_ISIS = 19;
+const VERSION_ISIS = 20;
 async function mirarSiHayNueva(){
   if(location.protocol === 'file:') return;
   try{
