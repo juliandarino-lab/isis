@@ -1369,7 +1369,7 @@ function reset(){
 const ST = {
   usuarioId:'us2', view:'home', sucursalId:'su1', areaId:null,
   fecha:hoy(), profTab:null, q:'', clientaId:null, visitaId:null,
-  eqTab:'hoy', semana:null, fichaFrom:'clientas', qp:'', diaTodo:false, ultimoTocado:null,
+  eqTab:'hoy', qeq:'', semana:null, fichaFrom:'clientas', qp:'', diaTodo:false, ultimoTocado:null,
   cajaFecha:null, recTab:null, recSucursalId:null
 };
 const CAJA_FECHA = () => ST.cajaFecha || hoy();
@@ -5954,14 +5954,26 @@ function etiquetaExc(e){
 
 /* ---------- solapa PERSONAL: alta y edición ---------- */
 function eqPersonal(){
-  const profes = profesDeSucursal();
+  const todasSucursal = profesDeSucursal();
+  const q = (ST.qeq||'').trim().toLowerCase();
+  const profes = todasSucursal.filter(p=>!q || p.nombre.toLowerCase().includes(q));
+  const otras = q ? DB.profesionales.filter(p=>!todasSucursal.includes(p) && p.nombre.toLowerCase().includes(q)) : [];
+  const suc = byId(DB.sucursales,ST.sucursalId);
+  const sinComision = todasSucursal.filter(p=>p.activa && p.comision==null).length;
   /* la supervisora puede modificar a su gente: horarios, servicios y excepciones */
   const puede = ['todo','area'].includes(perm('equipo'));
   const soloSuArea = perm('equipo')==='area';
   return `<div class="pad">
+    <div class="infobox"><b>Equipo de ${esc(suc?suc.nombre:'este local')}</b>. Buscá a una persona y
+      tocá su nombre para cambiar comisión, horarios, áreas o servicios.</div>
+    <div class="f"><input id="beq" placeholder="Buscar una profesional" value="${esc(ST.qeq||'')}"
+      autocomplete="off" oninput="ST.qeq=this.value;render();const e=document.getElementById('beq');if(e){e.focus();e.setSelectionRange(e.value.length,e.value.length);}"></div>
     ${perm('equipo')==='todo'?`<button class="btn" style="margin-bottom:13px" onclick="editarProfesional()">${ic('plus','sm')} Agregar profesional</button>`:''}
     ${soloSuArea?`<div class="infobox">Podés cambiar horarios, servicios, vacaciones y
       la comisión habitual de tu equipo. No tenés acceso a Caja.</div>`:''}
+    ${sinComision?`<div class="warnbox">${sinComision} profesional${sinComision===1?'':'es'} de este local
+      ${sinComision===1?'todavía no tiene':'todavía no tienen'} definida su comisión habitual.</div>`:''}
+    ${q&&!profes.length&&!otras.length?`<div class="empty">No encontramos una profesional con ese nombre.</div>`:''}
     <div class="listcard">${profes.map(p=>{
       const ars = areasDeProf(p.id);
       return `<button class="lr" onclick="verProfesional('${p.id}')">
@@ -5970,14 +5982,15 @@ function eqPersonal(){
           <span>${ars.map(x=>x.area.icono+' '+x.area.nombre+' · '+x.suc.nombre).join('  |  ')||'Sin áreas asignadas'}</span>
           <span class="tiny">Comisión habitual: ${p.comision!=null?p.comision+'%':'sin definir · usa la regla anterior'}</span></div>
         ${ic('chev','sm')}</button>`;}).join('')}</div>
-    ${DB.profesionales.filter(p=>!profes.includes(p)).length && perm('equipo')==='todo'?`
-      <div class="h3">Trabajan en otras sucursales</div>
-      <div class="listcard">${DB.profesionales.filter(p=>!profes.includes(p)).map(p=>`
+    ${otras.length && perm('equipo')==='todo'?`
+      <div class="h3">Coincidencias en otros locales</div>
+      <div class="listcard">${otras.map(p=>`
         <button class="lr" style="opacity:.7" onclick="verProfesional('${p.id}')">
           <div class="av">${ini(p.nombre)}</div>
           <div class="g"><b>${esc(p.nombre)}</b>
             <span>${areasDeProf(p.id).map(x=>x.suc.nombre).join(', ')||'Sin asignar'}</span></div>
           ${ic('chev','sm')}</button>`).join('')}</div>`:''}
+    ${!q&&perm('equipo')==='todo'?`<div class="small muted" style="margin-top:11px">Para encontrar a alguien de otro local, escribí su nombre arriba.</div>`:''}
   </div>`;
 }
 function verProfesional(pid){
@@ -8632,35 +8645,43 @@ function vReportes(){
    ============================================================ */
 function vConfig(){
   const sucA = byId(DB.sucursales, ST.sucursalId);
+  const profes = sucA?profesDeSucursal():[];
   return `<div class="pad">
+    ${sucA?`<div class="f"><label>Local que estás configurando</label>
+      <select onchange="cambiarSucursalConfig(this.value)">${DB.sucursales.filter(s=>s.activa!==false).map(s=>
+        `<option value="${s.id}" ${s.id===ST.sucursalId?'selected':''}>${esc(s.nombre)}</option>`).join('')}</select></div>`:''}
     ${pasosConfig()}
 
-    <div class="h3">Negocio y agenda</div>
+    <div class="h3">Lo que más vas a cambiar</div>
+    <div class="listcard">
+      ${sucA?`<button class="lr" onclick="abrirPersonalConfig()"><div class="g"><b>Profesionales, comisiones y horarios</b>
+        <span>${profes.length} en ${esc(sucA.nombre)} · buscá a una por nombre</span></div>${ic('chev','sm')}</button>
+      <button class="lr" onclick="go('servicios')"><div class="g"><b>Servicios y precios</b>
+        <span>${DB.servicios.filter(s=>(byId(DB.areas,s.areaId)||{}).sucursalId===ST.sucursalId).length} en ${esc(sucA.nombre)}</span></div>${ic('chev','sm')}</button>`:''}
+      <button class="lr" onclick="editarSenaGeneral()"><div class="g"><b>Reservas y señas</b>
+        <span>${esc(descripcionPoliticaSena(DB.cfg.sena))} · se puede cambiar por servicio</span></div>${ic('chev','sm')}</button>
+      <button class="lr" onclick="editarMensajesRecordatorios()"><div class="g"><b>Mensajes de recordatorios</b>
+        <span>Texto para el día anterior y para el mismo día</span></div>${ic('chev','sm')}</button>
+    </div>
+
+    <div class="h3">Precios generales</div>
+    <div class="listcard">
+      <button class="lr" onclick="editarRecargo()"><div class="g"><b>Recargo y redondeo</b>
+        <span>${DB.cfg.recargo}% · redondea a ${money(DB.cfg.redondeo)} para arriba</span></div>${ic('chev','sm')}</button>
+      <button class="lr" onclick="aumentoMasivo()"><div class="g"><b>Aumento de precios</b>
+        <span>Subir un porcentaje a un área o a todo</span></div>${ic('chev','sm')}</button>
+    </div>
+
+    <div class="h3">Estructura del negocio</div>
     <div class="listcard">
       <button class="lr" onclick="datosDelNegocio()"><div class="g"><b>Datos del negocio</b>
         <span>${esc(DB.cfg.negocio)} · avisa a los ${DB.cfg.diasSinVenir} días sin venir</span></div>${ic('chev','sm')}</button>
       <button class="lr" onclick="editarSucursales()"><div class="g"><b>Sucursales</b>
         <span>${DB.sucursales.length} cargadas</span></div>${ic('chev','sm')}</button>
-      ${sucA?`<button class="lr" onclick="go('areas')"><div class="g"><b>Áreas</b>
-        <span>${DB.areas.filter(a=>a.sucursalId===ST.sucursalId).length} en ${esc(sucA.nombre)}</span></div>${ic('chev','sm')}</button>
-      <button class="lr" onclick="go('servicios')"><div class="g"><b>Servicios y precios</b>
-        <span>${DB.servicios.filter(s=>(byId(DB.areas,s.areaId)||{}).sucursalId===ST.sucursalId).length} cargados</span></div>${ic('chev','sm')}</button>
-      <button class="lr" onclick="go('equipo')"><div class="g"><b>Profesionales y horarios</b>
-        <span>${DB.profesionales.filter(p=>p.activa).length} cargadas · horarios de la semana</span></div>${ic('chev','sm')}</button>
-      ${hayOtroLocalCargado()?`<button class="lr" onclick="copiarLocal()"><div class="g"><b>Copiar de otro local</b>
-        <span>Traer las áreas y los servicios ya cargados en otra sucursal</span></div>${ic('chev','sm')}</button>`:''}`:''}
-    </div>
-
-    <div class="h3">Precios, reservas y mensajes</div>
-    <div class="listcard">
-      <button class="lr" onclick="editarRecargo()"><div class="g"><b>Recargo y redondeo</b>
-        <span>${DB.cfg.recargo}% · redondea a ${money(DB.cfg.redondeo)} para arriba</span></div>${ic('chev','sm')}</button>
-      <button class="lr" onclick="editarSenaGeneral()"><div class="g"><b>Reservas y señas</b>
-        <span>${esc(descripcionPoliticaSena(DB.cfg.sena))} · se puede cambiar por servicio</span></div>${ic('chev','sm')}</button>
-      <button class="lr" onclick="aumentoMasivo()"><div class="g"><b>Aumento de precios</b>
-        <span>Subir un porcentaje a un área o a todo</span></div>${ic('chev','sm')}</button>
-      <button class="lr" onclick="editarMensajesRecordatorios()"><div class="g"><b>Mensajes de recordatorios</b>
-        <span>Texto para el día anterior y para el mismo día</span></div>${ic('chev','sm')}</button>
+      ${sucA?`<button class="lr" onclick="go('areas')"><div class="g"><b>Áreas de ${esc(sucA.nombre)}</b>
+        <span>${DB.areas.filter(a=>a.sucursalId===ST.sucursalId).length} cargadas</span></div>${ic('chev','sm')}</button>
+      ${hayOtroLocalCargado()?`<button class="lr" onclick="copiarLocal()"><div class="g"><b>Copiar estructura de otro local</b>
+        <span>Traer áreas, servicios y precios sin copiar profesionales</span></div>${ic('chev','sm')}</button>`:''}`:''}
     </div>
 
     <div class="h3">Personas y accesos</div>
@@ -8679,6 +8700,12 @@ function vConfig(){
         <span>${(pesoBase()/1024/1024).toFixed(2)} MB ocupados · ${DB.visitas.length} turnos guardados</span></div>${ic('chev','sm')}</button>
     </div>
   </div>`;
+}
+function cambiarSucursalConfig(sid){
+  ST.sucursalId=sid; ST.areaId=null; ST.qsv=''; ST.qeq=''; render();
+}
+function abrirPersonalConfig(){
+  ST.eqTab='personal'; ST.qeq=''; go('equipo');
 }
 function configRespaldo(){
   sheet('Copias, limpieza y reinicio', `
@@ -8886,7 +8913,9 @@ function hacerLimpieza(){
 }
 function vAreas(){
   const areas = DB.areas.filter(a=>a.sucursalId===ST.sucursalId).sort((x,y)=>x.orden-y.orden);
+  const suc = byId(DB.sucursales,ST.sucursalId);
   return `<div class="pad">
+    <div class="infobox">Estás cambiando las áreas de <b>${esc(suc?suc.nombre:'este local')}</b>.</div>
     <button class="btn" style="margin-bottom:13px" onclick="editarArea()">${ic('plus','sm')} Agregar área</button>
     <div class="listcard">${areas.map(a=>{
       const sv = DB.servicios.filter(s=>s.areaId===a.id).length;
@@ -8982,6 +9011,7 @@ function dejarSinUsoArea(id){
 function vServicios(){
   const areas = DB.areas.filter(a=>a.sucursalId===ST.sucursalId && a.activa);
   if(!ST.areaId || !areas.find(a=>a.id===ST.areaId)) ST.areaId = areas[0]?.id;
+  const suc = byId(DB.sucursales,ST.sucursalId);
   const q = (ST.qsv||'').trim().toLowerCase();
   const svs = q
     ? DB.servicios.filter(x=>areas.some(a=>a.id===x.areaId) && x.nombre.toLowerCase().includes(q))
@@ -8992,6 +9022,7 @@ function vServicios(){
         onclick="ST.areaId='${a.id}';render()">${a.icono} ${esc(a.nombre)}</button>`).join('')}
     </div>
     <div class="pad">
+      <div class="infobox">Servicios de <b>${esc(suc?suc.nombre:'este local')}</b>. Elegí el área de arriba.</div>
       <div class="f"><input id="bsv" placeholder="Buscar un servicio en todas las áreas"
         value="${esc(ST.qsv||'')}" autocomplete="off"
         oninput="ST.qsv=this.value;render();const e=document.getElementById('bsv');if(e){e.focus();e.setSelectionRange(e.value.length,e.value.length);}"></div>
@@ -9016,52 +9047,72 @@ function editarServicio(id){
   const g = (k,d) => s?s[k]:d;
   const sp=s&&s.sena?normalizarSena(s.sena):normalizarSena(DB.cfg.sena);
   const sm=s&&s.sena?sp.modo:'hereda';
+  const conProceso=(+g('proceso',0)>0 || +g('trabajo2',0)>0);
+  const agendaAvanzada=conProceso || +g('simult',1)>1;
+  const senaResumen=sm==='hereda'
+    ? 'Usa la regla general: '+descripcionPoliticaSena(DB.cfg.sena)
+    : descripcionPoliticaSena(sp);
   sheet(s?'Editar servicio':'Servicio nuevo', `
     <div class="f"><label>Nombre</label><input id="sn" value="${s?esc(s.nombre):''}" placeholder="Kapping"></div>
     <div class="f"><label>Precio de contado</label><input type="number" id="sc" value="${g('contado','')}" inputmode="numeric"></div>
     <div class="small muted" style="margin-bottom:11px">La comisión se configura en la ficha de cada profesional, en Equipo.</div>
     <div id="prev" class="okbox"></div>
-    <div class="h3" style="margin-top:6px">Tiempos</div>
-    <div class="row f">
-      <div><label>Trabaja</label><input type="number" id="s1" value="${g('trabajo1',60)}" inputmode="numeric" oninput="recalcDur()"></div>
-      <div><label>Proceso</label><input type="number" id="s2" value="${g('proceso',0)}" inputmode="numeric" oninput="recalcDur()"></div>
-      <div><label>Trabaja</label><input type="number" id="s3" value="${g('trabajo2',0)}" inputmode="numeric" oninput="recalcDur()"></div>
-    </div>
-    <div class="small muted" style="margin:-6px 0 13px">
-      Durante el <b>proceso</b> la profesional queda libre y puede atender a otra clienta.
-      Duración total: <b id="durtot">${g('dur',60)}</b> min.
-    </div>
-    <div class="f"><label>¿Cuántas clientas puede atender a la vez con este servicio?</label>
-      <input type="number" id="ss" value="${g('simult',1)}" min="1" max="5" inputmode="numeric"></div>
-    <div class="h3" style="margin-top:6px">Reserva y seña</div>
-    <div class="f"><label>Regla para este servicio</label>
-      <select id="ssm">${opcionesModoSena(sm,true)}</select></div>
-    <div class="f"><label>Cómo se calcula</label>
-      <select id="sst">${opcionesTipoSena(sp.tipo)}</select></div>
-    <div class="f"><label>Importe o porcentaje</label>
-      <input type="number" id="ssv" value="${sp.valor||''}" min="0" inputmode="numeric"></div>
-    <div class="small muted" style="margin:-8px 0 13px">Regla general actual:
-      <b>${esc(descripcionPoliticaSena(DB.cfg.sena))}</b>. Si elegís «Usar la regla general»,
-      los dos campos de abajo no se tienen en cuenta.</div>
-    <div class="chk"><input type="checkbox" id="sm" ${s&&s.precioManual?'checked':''}>
-      <div class="g"><b>Precio fijado a mano</b>
-      <span class="small muted">Los aumentos generales no le tocan el precio a este servicio</span></div></div>
+    ${conProceso
+      ? `<div class="okbox">Ocupa <b>${g('dur',60)} minutos</b> y tiene un tiempo de proceso. El detalle está abierto abajo.</div>`
+      : `<div class="f"><label>Duración que ocupa en la agenda (minutos)</label>
+          <input type="number" id="sdur" value="${g('dur',60)}" min="1" inputmode="numeric" oninput="duracionServicioSimple()"></div>`}
     <div class="f"><label>¿En qué área está?</label>
       <select id="sar">${DB.areas.filter(a=>a.activa && a.sucursalId===(s?(byId(DB.areas,s.areaId)||{}).sucursalId:ST.sucursalId)).map(a=>{const su=byId(DB.sucursales,a.sucursalId);
         return `<option value="${a.id}" ${(s?s.areaId:ST.areaId)===a.id?'selected':''}>${a.icono} ${esc(a.nombre)} · ${esc(su?su.nombre:'')}</option>`;}).join('')}</select></div>
-    ${s?`<div class="chk"><input type="checkbox" id="sa" ${s.activo?'checked':''}>
-      <div class="g"><b>Servicio en uso</b><span class="small muted">Si lo destildás deja de aparecer, pero el historial queda</span></div></div>`:''}
+
+    <details class="card cardp" style="margin-bottom:13px" ${agendaAvanzada?'open':''}>
+      <summary style="cursor:pointer;font-weight:700">Opciones avanzadas de agenda</summary>
+      <div class="small muted" style="margin:9px 0 11px">Usalas solo si durante una parte del servicio la profesional queda libre o puede atender más de una clienta.</div>
+      <div class="row f">
+        <div><label>Trabajo inicial</label><input type="number" id="s1" value="${g('trabajo1',60)}" inputmode="numeric" oninput="recalcDur()"></div>
+        <div><label>Proceso libre</label><input type="number" id="s2" value="${g('proceso',0)}" inputmode="numeric" oninput="recalcDur()"></div>
+        <div><label>Trabajo final</label><input type="number" id="s3" value="${g('trabajo2',0)}" inputmode="numeric" oninput="recalcDur()"></div>
+      </div>
+      <div class="small muted" style="margin:-6px 0 13px">Durante el proceso libre puede atender a otra clienta. Total: <b id="durtot">${g('dur',60)}</b> min.</div>
+      <div class="f"><label>Máximo de clientas al mismo tiempo</label>
+        <input type="number" id="ss" value="${g('simult',1)}" min="1" max="5" inputmode="numeric"></div>
+    </details>
+
+    <details class="card cardp" style="margin-bottom:13px" ${sm!=='hereda'?'open':''}>
+      <summary style="cursor:pointer;font-weight:700">Seña: ${esc(senaResumen)}</summary>
+      <div class="f" style="margin-top:11px"><label>Regla para este servicio</label>
+        <select id="ssm">${opcionesModoSena(sm,true)}</select></div>
+      <div class="f"><label>Cómo se calcula</label><select id="sst">${opcionesTipoSena(sp.tipo)}</select></div>
+      <div class="f"><label>Importe o porcentaje</label>
+        <input type="number" id="ssv" value="${sp.valor||''}" min="0" inputmode="numeric"></div>
+      <div class="small muted">Si usa la regla general, los dos campos de abajo no se tienen en cuenta.</div>
+    </details>
+
+    <details class="card cardp" style="margin-bottom:13px" ${(s&&(!s.activo||s.precioManual))?'open':''}>
+      <summary style="cursor:pointer;font-weight:700">Otras opciones</summary>
+      <div class="chk" style="margin-top:11px"><input type="checkbox" id="sm" ${s&&s.precioManual?'checked':''}>
+        <div class="g"><b>No aplicar aumentos generales</b><span class="small muted">El precio queda fijado a mano</span></div></div>
+      ${s?`<div class="chk"><input type="checkbox" id="sa" ${s.activo?'checked':''}>
+        <div class="g"><b>Servicio en uso</b><span class="small muted">Si lo destildás deja de aparecer, pero el historial queda</span></div></div>`:''}
+    </details>
+
     <button class="btn" style="margin-top:13px" onclick="guardarServicio('${id||''}')">Guardar</button>
-    ${s?`<button class="btn sec" style="margin-top:8px" onclick="duplicarServicio('${id}')">
-      ${ic('plus','sm')} Duplicar este servicio</button>
-    <button class="btn dan" style="margin-top:8px" onclick="borrarServicio('${id}')">${ic('trash','sm')} Borrar este servicio</button>`:''}`,
+    ${s?`<details class="card cardp" style="margin-top:13px"><summary style="cursor:pointer;font-weight:700">Duplicar o borrar</summary>
+      <button class="btn sec" style="margin-top:11px" onclick="duplicarServicio('${id}')">${ic('plus','sm')} Duplicar este servicio</button>
+      <button class="btn dan" style="margin-top:8px" onclick="borrarServicio('${id}')">${ic('trash','sm')} Borrar este servicio</button></details>`:''}`,
     {focus:'sn'});
   setTimeout(()=>{ recalcDur(); const c=document.getElementById('sc'); if(c) c.oninput=recalcDur; recalcDur(); },50);
+}
+function duracionServicioSimple(){
+  const d=+((document.getElementById('sdur')||{}).value||0);
+  const s1=document.getElementById('s1'), s2=document.getElementById('s2'), s3=document.getElementById('s3');
+  if(s1) s1.value=d; if(s2) s2.value=0; if(s3) s3.value=0; recalcDur();
 }
 function recalcDur(){
   const v=k=>+((document.getElementById(k)||{}).value||0);
   const d = v('s1')+v('s2')+v('s3');
   const e=document.getElementById('durtot'); if(e) e.textContent=d;
+  const simple=document.getElementById('sdur'); if(simple && document.activeElement!==simple) simple.value=d;
   const c=v('sc'), p=document.getElementById('prev');
   if(p) p.innerHTML = c>0
     ? `Contado <b>${money(c)}</b> · con recargo del ${DB.cfg.recargo}% redondeado para arriba: <b>${money(precioLista(c))}</b>`
@@ -9288,19 +9339,22 @@ function dejarSinUsoSucursal(id){
 /* ---------- el paso a paso de la primera carga ---------- */
 function pasosConfig(){
   const suc = ST.sucursalId;
+  const sucObj = byId(DB.sucursales,suc);
   const areasDe = DB.areas.filter(a=>a.sucursalId===suc && a.activa!==false);
   const svsDe = DB.servicios.filter(x=>areasDe.some(a=>a.id===x.areaId));
   const asgDe = DB.asign.filter(x=>areasDe.some(a=>a.id===x.areaId));
+  const profesDe = profesDeSucursal().filter(p=>p.activa!==false);
   const pasos = [
     {ok: DB.sucursales.length>0, t:'Cargá el local', d:'Nombre, dirección y teléfono', ir:"editarSucursales()"},
     {ok: areasDe.length>0, t:'Cargá las áreas', d:'Cejas, depilación, manicuría…', ir:"go('areas')"},
     {ok: svsDe.some(x=>x.contado>0), t:'Cargá los servicios con su precio', d:'Cuánto dura y cuánto sale cada uno', ir:"go('servicios')"},
-    {ok: DB.profesionales.filter(p=>p.activa).length>0, t:'Cargá las profesionales', d:'Quiénes trabajan', ir:"go('equipo')"},
-    {ok: asgDe.length>0 && DB.horarios.some(h=>asgDe.some(a=>a.id===h.asignId)), t:'Ponele el horario a cada una', d:'Qué días y en qué área trabaja', ir:"go('equipo')"}
+    {ok: profesDe.length>0, t:'Cargá las profesionales', d:'Quiénes trabajan en este local', ir:"abrirPersonalConfig()"},
+    {ok: profesDe.length>0 && profesDe.every(p=>p.comision!=null), t:'Definí las comisiones', d:'El porcentaje habitual de cada profesional', ir:"abrirPersonalConfig()"},
+    {ok: asgDe.length>0 && DB.horarios.some(h=>asgDe.some(a=>a.id===h.asignId)), t:'Ponele el horario a cada una', d:'Qué días y en qué área trabaja', ir:"abrirPersonalConfig()"}
   ];
   const falta = pasos.findIndex(p=>!p.ok);
-  if(falta===-1) return `<div class="infobox">Todo lo que hay acá lo cambia la dueña o administración
-    sin tocar nada más. Los cambios salen andando en la agenda al instante.</div>`;
+  if(falta===-1) return `<div class="okbox"><b>${esc(sucObj?sucObj.nombre:'El local')} está listo.</b>
+    Lo que cambies acá se refleja en la agenda al instante.</div>`;
   return `<div class="card cardp" style="margin-bottom:13px">
     <div class="h3" style="margin:0 0 9px">Para dejar el local listo</div>
     ${pasos.map((p,i)=>`<div class="lr" style="padding:9px 0;border-bottom:${i===pasos.length-1?'0':'1px solid var(--line)'}">
@@ -9418,28 +9472,35 @@ function duplicarServicio(id){
 }
 
 function verPermisos(){
-  const P = DB.cfg.permisos;
   sheet('Permisos por rol', `
-    <div class="infobox">Tocá cualquier casilla para cambiar qué puede hacer ese rol.
-    El cambio vale para todas las personas con ese rol, salvo que a alguien le hayas puesto
-    una excepción propia.</div>
-    <div class="gridwrap" style="padding:0">
-      <div class="grid" style="grid-template-columns:104px repeat(5,minmax(72px,98px))">
-        <div class="gh"></div>
-        ${Object.keys(ROLES).map(r=>`<div class="gh" style="font-size:10.5px">${ROLES[r]}</div>`).join('')}
-        ${MODULOS.map(m=>`
-          <div class="gt" style="text-align:left;padding:9px;font-size:12.5px;color:var(--ink);font-weight:600">${m.n}</div>
-          ${Object.keys(ROLES).map(r=>{
-            const bloqueado = r==='supervisora' && m.k==='caja';
-            const v = bloqueado ? 'no' : P[r][m.k];
-            const col = (v==='no')?'var(--faint)':(v==='todo'||v==='si')?'var(--ok)':'var(--warn)';
-            return `<div class="gc" style="padding:9px 4px;text-align:center;font-size:11px;color:${col};
-              font-weight:600;cursor:${bloqueado?'default':'pointer'}" ${bloqueado?'':`onclick="cambiarPermiso('${r}','${m.k}')"`}>${bloqueado?'Nunca':etiquetaPerm(m.k,v)}</div>`;
-          }).join('')}
-        `).join('')}
-      </div>
-    </div>
+    <div class="infobox">Elegí un rol. Adentro vas a ver, una debajo de otra, las pantallas que puede usar.</div>
+    <div class="listcard">${Object.keys(ROLES).map(r=>`
+      <button class="lr" onclick="verPermisosRol('${r}')">
+        <div class="g"><b>${ROLES[r]}</b><span>${esc(resumenRolPermisos(r))}</span></div>${ic('chev','sm')}
+      </button>`).join('')}</div>
     <button class="btn sec" style="margin-top:13px" onclick="restaurarPermisos()">Volver a los permisos por defecto</button>`);
+}
+function resumenRolPermisos(rol){
+  return {
+    duena:'Acceso total al negocio', admin:'Acceso total al negocio',
+    supervisora:'Maneja sus áreas y comisiones · nunca entra a Caja',
+    recepcion:'Agenda y clientas de su sucursal · puede usar Caja',
+    profesional:'Solo ve su trabajo · no ve teléfonos ni Caja',
+    mostrador:'Trabajo diario de la sucursal · la plata pide un PIN'
+  }[rol]||'';
+}
+function verPermisosRol(rol){
+  const P=DB.cfg.permisos[rol]; if(!P) return;
+  sheet('Permisos de '+ROLES[rol], `
+    <div class="infobox">${esc(resumenRolPermisos(rol))}. El cambio se aplica a todas las personas con este rol.</div>
+    <div class="listcard">${MODULOS.map(m=>{
+      const bloqueado=rol==='supervisora'&&m.k==='caja';
+      const v=bloqueado?'no':P[m.k];
+      return `<button class="lr" ${bloqueado?'disabled':`onclick="cambiarPermiso('${rol}','${m.k}')"`}>
+        <div class="g"><b>${m.n}</b><span>${bloqueado?'Esta regla no se puede cambiar':descPerm(m.k,v)}</span></div>
+        <span class="bd ${v==='no'?'':'ac'}">${bloqueado?'Nunca':etiquetaPerm(m.k,v)}</span>
+      </button>`;}).join('')}</div>
+    <button class="btn sec" style="margin-top:13px" onclick="verPermisos()">Volver a los roles</button>`);
 }
 function cambiarPermiso(rol, mk){
   if(rol==='supervisora' && mk==='caja'){ toast('La supervisora nunca entra a Caja'); return; }
@@ -9471,7 +9532,7 @@ function setPermiso(rol, mk, v){
   }
   DB.cfg.permisos[rol][mk]=v;
   logAcc(`Permiso ${ROLES[rol]} · ${mk} → ${v}`);
-  save(); closeSheet(); render(); setTimeout(verPermisos,120);
+  save(); closeSheet(); render(); setTimeout(()=>verPermisosRol(rol),120);
 }
 function restaurarPermisos(){
   if(!puedeConfig()){ toast('No tenés acceso a la configuración'); return; }
@@ -9481,21 +9542,31 @@ function restaurarPermisos(){
 }
 
 /* ---------- usuarios ---------- */
+function descripcionRolAcceso(r){
+  return {
+    duena:'Ve y cambia todo el negocio, incluida Caja y Configuración.',
+    admin:'Ve y cambia todo el negocio, incluida Caja y Configuración.',
+    supervisora:'Maneja sus áreas, horarios, descuentos y comisiones. Nunca entra a Caja.',
+    recepcion:'Maneja agenda, clientas y Caja de su sucursal.',
+    profesional:'Ve solamente su agenda y los nombres de sus clientas. No ve teléfonos ni Caja.',
+    mostrador:'Sirve para el celular compartido de recepción. Para tocar plata pide el PIN de una persona autorizada.'
+  }[r]||'';
+}
 function vUsuarios(){
-  const gentePlata = DB.usuarios.filter(u=>u.activo!==false && u.rol!=='mostrador'
+  const genteProtegida = DB.usuarios.filter(u=>u.activo!==false && u.rol!=='mostrador'
     && (puedeCajaEse(u)||puedeReportesEse(u)));
-  const conCaja = gentePlata.length;
-  const conPin  = gentePlata.filter(u=>tienePin(u)).length;
+  const conProteccion = genteProtegida.length;
+  const conPin  = genteProtegida.filter(u=>tienePin(u)).length;
   return `<div class="pad">
     <div class="card cardp" style="margin-bottom:13px">
       <div class="chk"><input type="checkbox" id="cf_pin" ${DB.cfg.pedirPin?'checked':''}
         onchange="cambiarPedirPin(this.checked)">
-        <div class="g"><b>Pedir el PIN para tocar la plata</b>
+        <div class="g"><b>Pedir el PIN para Caja y reportes</b>
           <span class="small muted">${DB.cfg.pedirPin
             ? 'Prendido: la agenda y la fila se usan sin pedir nada, pero para cobrar, cargar un gasto, cerrar la caja o ver los reportes hay que poner el PIN de cuatro números.'
             : 'Apagado: se cambia de persona eligiendo de una lista, sin PIN. Sirve para probar.'}</span></div></div>
-      <div class="tiny ${conPin<conCaja?'':'muted'}" style="margin-top:2px;${conPin<conCaja?'color:var(--warn)':''}">
-        ${conPin} de ${conCaja} ${conCaja===1?'persona que toca plata tiene':'personas que tocan plata tienen'} su PIN puesto.</div>
+      <div class="tiny ${conPin<conProteccion?'':'muted'}" style="margin-top:2px;${conPin<conProteccion?'color:var(--warn)':''}">
+        ${conPin} de ${conProteccion} ${conProteccion===1?'persona con Caja o reportes tiene':'personas con Caja o reportes tienen'} su PIN puesto.</div>
     </div>
     <button class="btn" style="margin-bottom:13px" onclick="editarUsuario()">${ic('plus','sm')} Agregar usuario</button>
     <div class="infobox">El celular del mostrador lo usan todas. El PIN aparece recién cuando
@@ -9505,14 +9576,15 @@ function vUsuarios(){
       const su = u.sucursalId?byId(DB.sucursales,u.sucursalId):null;
       const ar = nombreAreasDe(u);
       const plata = puedeCajaEse(u) || puedeReportesEse(u);
+      const paraPin = puedeCajaEse(u) ? (puedeReportesEse(u)?'Caja y reportes':'Caja') : 'reportes';
       return `<div class="lr" ${u.activo?'':'style="opacity:.5"'}>
         <button class="av" onclick="editarUsuario('${u.id}')">${ini(u.nombre)}</button>
         <button class="g" style="text-align:left" onclick="editarUsuario('${u.id}')">
           <b>${esc(u.nombre)}${u.activo?'':' <span class="bd">Inactivo</span>'}</b>
           <span>${ROLES[u.rol]}${ar?' · '+esc(ar):''}${su?' · '+esc(su.nombre):''}</span>
           ${exc.length?`<span class="tiny" style="color:var(--warn)">${exc.length} permiso${exc.length>1?'s':''} distinto${exc.length>1?'s':''} al de su rol</span>`:''}
-          ${(plata&&!tienePin(u))?`<span class="tiny" style="color:var(--warn)">Le falta el PIN</span>`:''}</button>
-        ${puedePonerPines()?`<button class="btn xs ${tienePin(u)?'sec':''}" onclick="ponerPin('${u.id}')">
+          ${(plata&&!tienePin(u))?`<span class="tiny" style="color:var(--warn)">Le falta el PIN para ${paraPin}</span>`:''}</button>
+        ${(plata&&puedePonerPines())?`<button class="btn xs ${tienePin(u)?'sec':''}" onclick="ponerPin('${u.id}')">
           ${tienePin(u)?'PIN ●●●●':'Poner PIN'}</button>`:''}
       </div>`;}).join('')}</div>
   </div>`;
@@ -9527,7 +9599,7 @@ function cambiarPedirPin(v){
   if(!tienePin(yo) && gentePlata.some(u=>u.id===yo.id)){
     sheet('Primero el tuyo', `
       <div class="warnbox">${ic('alert','sm')} Antes de prender esto ponete <b>tu propio PIN</b>,
-        si no te quedás afuera de la caja.</div>
+        si no te quedás afuera de Caja y reportes.</div>
       <button class="btn" onclick="closeSheet();ponerPin('${yo.id}')">Poner mi PIN</button>`);
     render(); return;
   }
@@ -9539,7 +9611,7 @@ function cambiarPedirPin(v){
       ${MINUTOS_SESION} minutos.</div>
     ${sinPin.length?`<div class="warnbox" style="text-align:left">${ic('alert','sm')}
       Todavía no tienen PIN: <b>${sinPin.map(u=>esc(u.nombre.split(' ')[0])).join(', ')}</b>.
-      Hasta que se los pongas no van a poder tocar la caja.</div>`:''}
+      Hasta que se los pongas no van a poder usar Caja ni ver los reportes que les correspondan.</div>`:''}
     <button class="btn" onclick="hacerPedirPin(true)">${ic('lock','sm')} Prender</button>
     <button class="btn sec" style="margin-top:8px" onclick="closeSheet();render()">Cancelar</button>`);
 }
@@ -9564,22 +9636,23 @@ function editarUsuario(usId){
   const u = usId?byId(DB.usuarios,usId):null;
   sheet(u?'Editar '+u.nombre:'Usuario nuevo', `
     <div class="f"><label>Nombre y apellido</label><input id="un" value="${u?esc(u.nombre):''}"></div>
-    <div class="f"><label>Mail con el que entra</label>
-      <input id="ue" type="email" inputmode="email" value="${u?esc(u.email||''):''}"
-        placeholder="sunombre@gmail.com">
-      <div class="tiny muted" style="margin-top:4px">Es el mail con el que va a entrar al sistema
-        y al que le llegan los avisos de contraseña. Tiene que ser uno al que ella entre de verdad.</div></div>
     <div class="f"><label>Rol</label>
       <select id="ur" onchange="camposUsuario()">
         ${Object.keys(ROLES).map(r=>`<option value="${r}" ${u&&u.rol===r?'selected':''}>${ROLES[r]}</option>`).join('')}
       </select></div>
     <div id="ucampos"></div>
+    <details class="card cardp" style="margin-bottom:13px" ${u&&u.email?'open':''}>
+      <summary style="cursor:pointer;font-weight:700">Mail de acceso · preparado para la nube</summary>
+      <div class="f" style="margin-top:11px"><label>Mail</label>
+        <input id="ue" type="email" inputmode="email" value="${u?esc(u.email||''):''}" placeholder="sunombre@gmail.com"></div>
+      <div class="small muted">Durante la prueba en un solo aparato todavía no se usa para entrar. Queda guardado para cuando se conecte el acceso individual.</div>
+    </details>
     ${u?`<div class="chk"><input type="checkbox" id="ua" ${u.activo?'checked':''}>
       <div class="g"><b>Activo</b><span class="small muted">Si se va, desactivalo. No pierde nada del historial.</span></div></div>`:''}
     <button class="btn" style="margin-top:13px" onclick="guardarUsuario('${usId||''}')">Guardar</button>
-    ${u?`<button class="btn sec" style="margin-top:8px" onclick="permisosDe('${usId}')">
-      ${ic('lock','sm')} Permisos propios de ${esc(u.nombre.split(' ')[0])}</button>
-    <button class="btn dan" style="margin-top:8px" onclick="borrarUsuario('${usId}')">${ic('trash','sm')} Borrar este usuario</button>`:''}`,
+    ${u?`<details class="card cardp" style="margin-top:13px"><summary style="cursor:pointer;font-weight:700">Opciones avanzadas</summary>
+      <button class="btn sec" style="margin-top:11px" onclick="permisosDe('${usId}')">${ic('lock','sm')} Permisos propios de ${esc(u.nombre.split(' ')[0])}</button>
+      <button class="btn dan" style="margin-top:8px" onclick="borrarUsuario('${usId}')">${ic('trash','sm')} Borrar este usuario</button></details>`:''}`,
     {focus:'un'});
   setTimeout(()=>camposUsuario(usId),40);
 }
@@ -9590,7 +9663,7 @@ function camposUsuario(usId){
   /* si la hoja ya se cerró (se guardó rápido), no hay nada que pintar */
   if(!sel || !box) return;
   const r = sel.value;
-  let html = '';
+  let html = `<div class="infobox">${esc(descripcionRolAcceso(r))}</div>`;
   if(r!=='duena' && r!=='admin'){
     html += `<div class="f"><label>Sucursal</label>
       <select id="us"><option value="">Todas</option>
@@ -9735,7 +9808,7 @@ render();
    Julián actualizaba y no veía los cambios. Cada vez que se abre,
    la app se fija sola si hay una más nueva y se recarga.
    ============================================================ */
-const VERSION_ISIS = 20;
+const VERSION_ISIS = 21;
 async function mirarSiHayNueva(){
   if(location.protocol === 'file:') return;
   try{
