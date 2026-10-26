@@ -3,42 +3,42 @@
    teléfonos hace falta conectar el servidor; mientras tanto, la planilla se
    reparte con el PDF. */
 (function(root){'use strict';
+if(root.ISIS_OJOS_CONFIG?.firebase?.apiKey)return;
 try{document.documentElement.lang='es-AR';}catch(e){}
 const $=s=>document.querySelector(s),CLAVE='isis_ojos_datos';
+const html=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const LOCALES=['Centro 54','Centro 45','Los Hornos','City Bell'];
 const EJEMPLO=['Ana Gómez','Belén Ruiz','Camila Díaz','Daiana Sosa','Evelyn Paz','Florencia Ledesma','Gabriela Núñez','Rocío Medina'];
 const id=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
-function vacio(h){
+function vacio(h){ /* sin nombres inventados: el equipo lo carga Romi */
  h=h||{abre:'09:00',cambio:'14:30',cierra:'20:00',personas:2};
  const branches=LOCALES.map((name,i)=>({id:'b'+i,name,
   morning:{start:h.abre,end:h.cambio,slots:h.personas},
   afternoon:{start:h.cambio,end:h.cierra,slots:h.personas}}));
- return {schema:2,branches,employees:[],base:[],weeks:{},exceptions:[],punctual:[],history:[],requests:[],messages:[]};
+ return {schema:3,branches,employees:[],base:[],weeks:{},exceptions:[],punctual:[],history:[],requests:[],messages:[]};
 }
 function ejemplo(){
- const s=vacio();
+ const s=vacio();s.ejemplo=true;
  s.employees=EJEMPLO.map((name,i)=>({id:'e'+i,name,active:true}));
  let n=0;
  s.branches.forEach(b=>['morning','afternoon'].forEach(t=>{
   const p=s.employees[n++%s.employees.length];
-  for(let day=0;day<6;day++)s.base.push({id:id(),employeeId:p.id,branchId:b.id,shift:t,day,start:b[t].start,end:b[t].end,pauseStart:null,pauseEnd:null});
+  for(let day=0;day<6;day++)s.base.push({id:id(),employeeId:p.id,branchId:b.id,shift:t,day,start:b[t].start,end:b[t].end,pauseStart:null,pauseEnd:null,desde:null,hasta:null});
  }));
  s.messages=[{id:'bienvenida',title:'Datos de ejemplo',body:'Estos nombres son de ejemplo para que veas cómo funciona. Entrá a Equipo y cargá a tu gente de verdad.',audience:'all',created:new Date().toISOString().slice(0,10),read:[]}];
  return s;
 }
-function leer(){try{const t=localStorage.getItem(CLAVE);return t?JSON.parse(t):null;}catch{return null;}}
+/* Una copia guardada con la versión vieja se pasa sola a la nueva forma. */
+function leer(){try{const t=localStorage.getItem(CLAVE);return t?root.OJOS_HORARIOS.migrar(JSON.parse(t)):null;}catch{return null;}}
 function escribir(s){try{localStorage.setItem(CLAVE,JSON.stringify(s));return true;}catch{return false;}}
 let estado=null,quien=null;
 
 function banda(){
  if($('#banda'))return;
  const d=document.createElement('div');d.id='banda';d.className='aviso-band';
- d.innerHTML='<span>Solo en este teléfono. No se comparte automáticamente.</span>'+
-  '<button type="button" id="banda-copia">Guardar copia</button>'+
-  '<button type="button" id="banda-restaurar">Traer copia</button>';
+ d.innerHTML='<span>Guardado solo en este teléfono · sin conexión entre teléfonos</span>'+
+  '<button type="button" data-ir="copias">Copias</button>';
  document.body.prepend(d);
- $('#banda-copia').onclick=copia;
- $('#banda-restaurar').onclick=()=>restaurar(false);
 }
 function copia(){
  try{
@@ -50,8 +50,8 @@ function copia(){
 }
 function resumen(e){
  const p=(e.employees||[]).filter(x=>x.active!==false).length;
- const se=Object.keys(e.weeks||{}).length,h=(e.base||[]).length;
- return p+' '+(p===1?'persona':'personas')+', '+h+' horarios habituales y '+se+' '+(se===1?'semana':'semanas');
+ const h=(e.base||[]).length,c=(e.punctual||[]).length;
+ return p+' '+(p===1?'persona':'personas')+', '+h+' '+(h===1?'turno':'turnos')+' del horario de siempre y '+c+' '+(c===1?'cambio puntual':'cambios puntuales');
 }
 function restaurar(desdeInicio){
  const input=document.createElement('input');input.type='file';input.accept='.json,application/json';
@@ -60,16 +60,17 @@ function restaurar(desdeInicio){
    const file=input.files[0];if(!file)return;
    if(file.size>5000000)throw Error('Ese archivo es demasiado grande para ser una copia de ISIS Ojos.');
    const datos=JSON.parse(await file.text());
-   if(datos.kind!=='isis-ojos-backup'||datos.version!==1||!datos.state||datos.state.schema!==2)
+   if(datos.kind!=='isis-ojos-backup'||datos.version!==1||!datos.state||![2,3].includes(datos.state.schema))
     throw Error('Ese archivo no es una copia de ISIS Ojos. Elegí el que dice "ISIS Ojos - copia".');
+   const revisado=root.OJOS_VALIDAR_COPIA(datos);
    const actual=leer();
-   const tieneDatos=!!(actual&&((actual.employees||[]).length||(actual.base||[]).length||Object.keys(actual.weeks||{}).length));
+   const tieneDatos=!!(actual&&((actual.employees||[]).length||(actual.base||[]).length||(actual.punctual||[]).length));
    const fecha=datos.createdAt?new Date(datos.createdAt).toLocaleString('es-AR'):'sin fecha';
    const texto='La copia es del '+fecha+' y trae '+resumen(datos.state)+'.'+
     (tieneDatos?'\n\nATENCIÓN: en este teléfono ya hay datos cargados ('+resumen(actual)+') y se van a REEMPLAZAR. Esto no se puede deshacer.\n\n¿Reemplazar igual?':'\n\n¿La cargo en este teléfono?');
    if(!confirm(texto))return;
-   estado=datos.state;
-   if(!escribir(estado))throw Error('El teléfono no dejó guardar la copia. Liberá espacio y probá de nuevo.');
+   if(!escribir(revisado))throw Error('El teléfono no dejó guardar la copia. Liberá espacio y probá de nuevo.');
+   estado=revisado;
    if(desdeInicio){pantalla();alert('Copia restaurada: '+resumen(estado)+'. Entrá y revisá los horarios.');}
    else if(root.Ojos){root.Ojos.replace(estado);alert('Copia restaurada: '+resumen(estado)+'.');}
   }catch(e){alert('No se pudo restaurar: '+e.message);}
@@ -84,18 +85,18 @@ function sesion(){
   async save(next){const copia=structuredClone(next);if(!escribir(copia))throw Error('El teléfono no dejó guardar. Liberá espacio y guardá una copia.');estado=copia;return structuredClone(estado);},
   async reload(){},
   async archive(){throw Error('Archivar semanas necesita el servidor conectado.');},
-  async restore(c){if(c&&c.state){estado=structuredClone(c.state);escribir(estado);root.Ojos.replace(estado);}},
+  async restore(c){const revisado=root.OJOS_VALIDAR_COPIA(c);if(!escribir(revisado))throw Error('El teléfono no dejó guardar la copia. No se reemplazó nada.');estado=revisado;root.Ojos.replace(estado);return structuredClone(estado);},
+  conectado:false,
   async request(path){
    if(path==='/backup')return {kind:'isis-ojos-backup',version:1,createdAt:new Date().toISOString(),revision:0,state:structuredClone(estado)};
    if(path==='/accounts')throw Error('Los accesos con usuario y PIN se habilitan cuando se conecte el servidor. Por ahora la planilla se reparte con el PDF.');
    throw Error('Eso necesita el servidor conectado.');}
  };
 }
+root.OJOS_COPIA={guardar:copia,traer:()=>restaurar(false)};
 function entrar(elegido){
  quien=elegido;sesion();banda();
  try{document.documentElement.lang='es-AR';}catch(e){}
- document.body.classList.add('modo-simple');
- if(quien.role!=='supervisor')document.body.classList.add('modo-empleada');
  $('#logout').onclick=()=>location.reload();
  $('#session-name').textContent=quien.name;
  $('#login-panel').hidden=true;$('#application').hidden=false;
@@ -121,8 +122,9 @@ function horarios(){
  $('#h-listo').onclick=()=>{
   const abre=$('#h-abre').value,cambio=$('#h-cambio').value,cierra=$('#h-cierra').value;
   if(!(hm(abre)<hm(cambio)&&hm(cambio)<hm(cierra))){$('#h-error').textContent='Revisá las horas: abren, después el cambio de turno, después cierran.';return;}
-  estado=vacio({abre,cambio,cierra,personas:+$('#h-personas').value});
-  escribir(estado);entrar({name:'Supervisora',role:'supervisor'});
+  const nuevo=vacio({abre,cambio,cierra,personas:+$('#h-personas').value});
+  if(!escribir(nuevo)){$('#h-error').textContent='El navegador no dejó guardar. Revisá el espacio disponible antes de empezar.';return;}
+  estado=nuevo;entrar({name:'Supervisora',role:'supervisor'});
  };
 }
 function pantalla(){
@@ -134,11 +136,11 @@ function pantalla(){
   (guardado?
    '<div class="field"><label for="quien">¿Como quién querés entrar?</label><select id="quien">'+
     '<option value="super">Supervisora (arma los cuatro locales)</option>'+
-    (guardado.employees||[]).filter(e=>e.active!==false).map(e=>'<option value="'+e.id+'">'+e.name+' — ver lo que ve ella</option>').join('')+
+    (guardado.employees||[]).filter(e=>e.active!==false).map(e=>'<option value="'+html(e.id)+'">'+html(e.name)+' — demostración de lo que ve ella</option>').join('')+
    '</select></div><button class="btn primary" type="button" id="seguir">Seguir donde quedé</button>'
    :
-   '<button class="btn primary" type="button" id="vacio">Empezar y cargar mi equipo</button>'+
-   '<button class="btn" type="button" id="demo">Ver un ejemplo armado</button>')+
+   '<button class="btn primary" type="button" id="vacio">Empezar con mi equipo</button>'+
+   '<button class="btn" type="button" id="demo">Ver un ejemplo (datos inventados)</button>')+
   '<button class="text-button" type="button" id="restaurar" style="margin-top:14px">Restaurar una copia guardada</button>'+
   '<p class="hint" style="margin-top:14px">Los datos se guardan solo en este navegador y teléfono; no se comparten automáticamente. Guardá una copia cada tanto.</p>'+
   (guardado?'<button class="text-button" type="button" id="reset">Borrar todo y empezar de cero</button>':'');
@@ -149,7 +151,7 @@ function pantalla(){
   $('#reset').onclick=()=>{if(confirm('Se borran los horarios guardados en este teléfono. ¿Seguro?')){try{localStorage.removeItem(CLAVE);}catch{}pantalla();}};
  }else{
   $('#vacio').onclick=()=>horarios();
-  $('#demo').onclick=()=>{estado=ejemplo();escribir(estado);entrar({name:'Supervisora',role:'supervisor'});};
+  $('#demo').onclick=()=>{const nuevo=ejemplo();if(!escribir(nuevo)){alert('El navegador no dejó guardar el ejemplo. Revisá el espacio disponible.');return;}estado=nuevo;entrar({name:'Supervisora',role:'supervisor'});};
  }
 }
 if(document.readyState==='loading')addEventListener('DOMContentLoaded',pantalla);else pantalla();
