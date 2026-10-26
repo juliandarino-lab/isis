@@ -371,12 +371,12 @@ function pantallaInicio(){
  const ejemplo=db.ejemplo?`<div class="aviso atencion"><strong>Estás viendo datos de ejemplo</strong>
    Los nombres y horarios son inventados, para que veas cómo funciona. Entrá a <strong>Equipo</strong> y cargá a tu gente, o empezá de cero desde la pantalla de inicio.</div>`:'';
  const sinEquipo=!gente?`<div class="aviso atencion"><strong>Todavía no hay nadie cargado</strong>
-   Empezá por <strong>Equipo</strong>: agregá a las chicas y después armá la semana.</div>`:'';
+   Empezá por <strong>Equipo</strong>: agregá a las chicas y cargá su horario habitual una sola vez. Después se repite automáticamente.</div>`:'';
  return `<div class="portada">
   ${ejemplo}${sinEquipo}
   ${navegadorSemana()}
   <button class="accion-grande destacada" data-ir="schedule">
-   <span class="ico">🗓</span><span><b>Horarios</b><span>El horario de los cuatro locales, día por día${faltan?` · faltan ${faltan} lugares`:' · todo cubierto'}</span></span></button>
+   <span class="ico">🗓</span><span><b>Horarios</b><span>El horario de los cuatro locales, día por día${!gente?'':faltan?` · faltan ${faltan} lugares`:' · todo cubierto'}</span></span></button>
   <button class="accion-grande" data-ir="absences">
    <span class="ico">🔄</span><span><b>Ausencias y reemplazos</b><span>Vacaciones, licencias, faltas y quién cubre</span></span></button>
   <button class="accion-grande" data-ir="planillas">
@@ -538,7 +538,7 @@ function pantallaSolicitudes(){
  return `${estado}
  ${!supervisor()?'<button class="accion-grande destacada" data-action="new-request"><span class="ico">✋</span><span><b>Pedir un cambio</b><span>Cambiar un horario, un día libre o avisar una falta</span></span></button>':''}
  <div class="aviso info"><strong>Aprobar no cambia el horario solo</strong>
-  Cuando aprobás un pedido, después tenés que acomodar el horario en <strong>Horarios</strong> y confirmar la semana. Nada se mueve por su cuenta.</div>
+  Cuando aprobás un pedido, después tenés que guardar el cambio en <strong>Horarios</strong>, como puntual o permanente según corresponda. Aprobar el pedido no modifica los horarios automáticamente.</div>
  <div class="lista">${lista.length?lista.map(r=>`<article class="tarjeta"><div class="item" style="border:0;padding:0;background:transparent"><div class="crece"><b>${esc(r.type)}${supervisor()?' · '+esc(employee(r.employeeId)?.name||''):''}</b><small>${dateLabel(r.date)}</small></div><span class="estado ${r.status==='Aprobada'?'confirmada':'borrador'}">${esc(r.status)}</span></div><p class="cuerpo">${esc(r.detail)}</p>${r.note?`<p class="hint">Respuesta: ${esc(r.note)}</p>`:''}${supervisor()&&r.status==='Pendiente'?`<div class="ajustes-fila"><button class="btn chico primary" data-resolve="${r.id}|Aprobada">Aprobar</button><button class="btn chico" data-resolve="${r.id}|No aprobada">No aprobar</button></div>`:''}</article>`).join(''):`<div class="aviso info"><strong>${supervisor()?'No hay pedidos':'Todavía no pediste nada'}</strong>${supervisor()?'Los pedidos del equipo aparecen acá.':'Podés pedir un cambio o avisar una ausencia.'}</div>`}</div>`;
 }
 
