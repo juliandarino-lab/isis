@@ -1,6 +1,6 @@
 'use strict';
-const CACHE="isis-ojos-static-compartido-20261026-4",FILES=["./","app.js","horarios.js","icono-192.png","icono-512.png","icono.svg","importar-isis.js","index.html","inicio.js","jspdf.js","logo.jpg","manifest.webmanifest","pdf.js","validar-copia.js","conexion-config.js","conexion-datos.js","estado-compartido.js","conexion-simple.js","ingreso.js","accesos.js","instalar-compartir.js"];
-const STATIC=new Set(FILES.map(f=>new URL(f,self.location.href).href));
+const CACHE="isis-ojos-static-compartido-20261026-5",FILES=["./","app.js","horarios.js","icono-192.png","icono-512.png","icono.svg","importar-isis.js","index.html","inicio.js","jspdf.js","logo.jpg","manifest.webmanifest","pdf.js","validar-copia.js","conexion-config.js","conexion-datos.js","estado-compartido.js","conexion-simple.js?v=20261026-5","ingreso.js","accesos.js","instalar-compartir.js"];
+const STATIC=new Set(FILES.map(f=>{const u=new URL(f,self.location.href);u.search='';return u.href;}));
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(FILES)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>(k.startsWith('isis-ojos-local-')||k.startsWith('isis-ojos-static-'))&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',e=>{const u=new URL(e.request.url);u.search='';u.hash='';if(e.request.method!=='GET'||e.request.headers.has('Authorization')||!STATIC.has(u.href))return;e.respondWith(fetch(e.request).then(r=>{if(r.ok){const copy=r.clone();caches.open(CACHE).then(c=>c.put(e.request,copy));}return r;}).catch(()=>caches.match(e.request)));});
