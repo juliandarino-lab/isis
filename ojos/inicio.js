@@ -132,7 +132,7 @@ function pantalla(){
  const card=$('#login-panel .login-card');
  card.innerHTML='<div class="brand"><img class="brand-logo" src="logo.jpg" alt="Isis"><div><strong>ISIS <span>Ojos</span></strong><small>Los horarios del equipo.</small></div></div>'+
   '<h1>'+(guardado?'Hola de nuevo.':'Empecemos.')+'</h1>'+
-  '<p class="sub">Armá la semana de los cuatro locales y repartila con el PDF.</p>'+
+  '<p class="sub">Cargá el horario habitual una vez y repartí la planilla con el PDF.</p>'+
   (guardado?
    '<div class="field"><label for="quien">¿Como quién querés entrar?</label><select id="quien">'+
     '<option value="super">Supervisora (arma los cuatro locales)</option>'+

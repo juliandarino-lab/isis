@@ -330,7 +330,7 @@ document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)r
 const conectado=()=>!!(root.ISIS_SESSION&&root.ISIS_SESSION.conectado);
 const TITULOS={
  inicio:['Ojos','Los horarios del equipo'],
- schedule:['Horarios','Armá la semana, local por local'],
+ schedule:['Horarios','Horario habitual y cambios, local por local'],
  absences:['Ausencias y reemplazos','Quién falta y quién la cubre'],
  planillas:['Planillas','Para imprimir y repartir'],
  team:['Equipo','Quiénes trabajan en Ojos'],
@@ -610,10 +610,10 @@ function cancelarAusencia(aid){
  const a=(db.exceptions||[]).find(x=>x.id===aid);if(!a||!supervisor())return;
  openSheet('Cancelar la ausencia',
   `<p>Se borra la ausencia de <strong>${esc(employee(a.employeeId)?.name||'')}</strong> del ${dateLabel(a.from)} al ${dateLabel(a.to)}.</p>
-   <p class="hint">Los horarios que se le habían quitado <strong>no vuelven solos</strong>: revisá esas semanas y asignalos de nuevo si corresponde.</p>`,
+   <p class="hint">Se vuelve a aplicar el horario que le corresponde en esas fechas. Si otra persona la estaba cubriendo, revisá ese reemplazo.</p>`,
   `<button type="button" class="btn" data-action="close">Volver</button><button class="btn danger" type="submit">Cancelar la ausencia</button>`,
   ()=>{db.exceptions=db.exceptions.filter(x=>x.id!==aid);closeSheet();
-   save('Ausencia cancelada. Revisá los horarios de esas semanas.');});
+   save('Ausencia cancelada. Revisá si hay un reemplazo que acomodar.');});
 }
 function agregarEmpleada(){
  if(!supervisor())return;
