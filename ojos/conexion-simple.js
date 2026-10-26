@@ -176,7 +176,13 @@ async function employeeSave(next){
  else {const id=route.split('/')[1],m=messages.find(m=>m.id===id);if(m&&!m.read.includes(profile.empleadaId))m.read.push(profile.empleadaId);}
  apply();return state();
 }
-function accounts(){const seen=new Map(invitations.map(i=>[i.login,{login:i.login,name:i.nombre,employeeId:i.empleadaId,role:i.rol==='supervisora'?'supervisor':'employee',active:i.activa!==false}]));for(const p of profiles)seen.set(p.correo,{uid:p.uid,login:p.correo,name:p.nombre,employeeId:p.empleadaId,role:p.rol==='supervisora'?'supervisor':'employee',active:p.activa!==false});return {accounts:[...seen.values()]};}
+function accounts(){
+ const normalize=e=>String(e||'').trim().toLowerCase();
+ const hidden=new Set(invitations.filter(i=>i.ocultarEnListado===true).map(i=>normalize(i.login)));
+ const seen=new Map(invitations.map(i=>[normalize(i.login),{login:i.login,name:i.nombre,employeeId:i.empleadaId,role:i.rol==='supervisora'?'supervisor':'employee',active:i.activa!==false}]));
+ for(const p of profiles)seen.set(normalize(p.correo),{uid:p.uid,login:p.correo,name:p.nombre,employeeId:p.empleadaId,role:p.rol==='supervisora'?'supervisor':'employee',active:p.activa!==false});
+ return {accounts:[...seen.values()].filter(a=>!hidden.has(normalize(a.login))||normalize(a.login)===normalize(user?.email))};
+}
 async function access(body){
  requireSup();const email=String(body.login||'').trim().toLowerCase(),person=data.employees.find(e=>e.id===body.employeeId&&e.active!==false);
  if(!/^[^@\s/]+@[^@\s/]+\.[^@\s/]+$/.test(email)||email.length>200)throw fail('Escribí un correo válido de Google.');
